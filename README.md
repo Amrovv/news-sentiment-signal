@@ -3,7 +3,7 @@
 ML model to predict stock prices
 
 ## Project Organization
-
+```
 ├── .env               <- Secret/config variables (git-ignored)
 ├── .gitignore         <- Files git should never track
 ├── Makefile           <- Shortcut commands: make data, make test, make lint
@@ -35,6 +35,6 @@ ML model to predict stock prices
 │       └── predict.py <- Run inference                  (model.pkl → predictions)
 │
 └── tests              <- Automated tests (pytest)
-
+```
 --------
 
