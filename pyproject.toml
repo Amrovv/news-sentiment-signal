@@ -16,20 +16,33 @@ classifiers = [
     
 ]
 dependencies = [
+    "bertopic",
+    "finnhub-python",
     "ipython",
     "jupyterlab",
+    "lightgbm",
     "loguru",
     "matplotlib",
     "notebook",
     "numpy",
     "pandas",
+    "pandas-market-calendars",
     "pip",
+    "pyarrow",
     "pytest",
     "python-dotenv",
     "ruff",
     "scikit-learn",
+    "seaborn",
+    "sentence-transformers",
+    "shap",
+    "spacy",
+    "streamlit",
+    "torch",
     "tqdm",
+    "transformers",
     "typer",
+    "yfinance",
 ]
 requires-python = "~=3.12.0"
 

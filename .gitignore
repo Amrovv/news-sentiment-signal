@@ -189,3 +189,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Guides
+person_A_guide.md 
+person_B_guide.md 
+project_overview.md  
