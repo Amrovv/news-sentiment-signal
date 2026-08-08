@@ -22,6 +22,7 @@ dependencies = [
     "jupyterlab",
     "lightgbm",
     "loguru",
+    "lxml>=6.1.1",
     "matplotlib",
     "notebook",
     "numpy",
