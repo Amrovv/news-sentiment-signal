@@ -194,3 +194,9 @@ cython_debug/
 person_A_guide.md 
 person_B_guide.md 
 project_overview.md  
+
+# Large processed parquet snapshots (only the best run is tracked)
+data/processed/processed_articles.parquet
+data/processed/processed_articles_2nd.parquet
+data/processed/processed_articles_origin.parquet
+data/processed/processed_articles_best.parquet
