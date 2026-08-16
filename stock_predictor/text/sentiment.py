@@ -36,7 +36,18 @@ Design notes (see module-level docstrings below for detail):
   * FinBERT label order is verified against model.config.id2label at load
     time rather than assumed -- see _build_label_index_map().
   * All three raw probabilities (pos, neg, neu) are stored everywhere; no
-    single collapsed score is persisted anywhere in this module.
+    single collapsed score is persisted anywhere in this module -- WITH ONE
+    NAMED EXCEPTION. The fus_conf_graft_* / fus_conf_graft_soft_* columns
+    (see FUSION_FEATURE_COLUMNS and the FUSION block in
+    aggregate_article_features()) ARE signed scalars, not pos/neg/neu
+    probability triples: they come from stock_predictor.text.fusion, which by
+    design collapses FinBERT and ABSA into one graft-fused number per
+    sentence (see fusion.py's module docstring for why). This is recorded
+    here honestly rather than silently violated. The invariant is preserved
+    IN SUBSTANCE, though: the raw pos/neg/neu and absa_pos/absa_neg/absa_neu
+    columns those grafts are built from are all still stored on the sentence
+    table, so every fus_* value remains exactly recomputable from what is
+    persisted -- nothing is lost, a derived convenience is added on top.
 """
 
 import hashlib
@@ -53,7 +64,7 @@ from stock_predictor.config import (
     SENTIMENT_BATCH_SIZE,
     SENTIMENT_CACHE_PATH,
 )
-from stock_predictor.text import entity_filter
+from stock_predictor.text import entity_filter, fusion
 
 CACHE_COLUMNS = ["text_hash", "pos", "neg", "neu"]
 
@@ -77,6 +88,21 @@ ABSA_FEATURE_COLUMNS = [
     "absa_ceo_pos",
     "absa_ceo_neg",
     "absa_ceo_neu",
+]
+
+# Article-level columns fusion.aggregate_fusion_features() derives from the
+# conf_graft / conf_graft_soft fusion variants -- see the FUSION block in
+# aggregate_article_features() below and fusion.aggregate_fusion_features()'s
+# own docstring for the full reasoning (population, the six aggregations,
+# why top3 exists, why K stays at 3, and the measured cases behind median and
+# spread). Like ABSA_FEATURE_COLUMNS, this sits ALONGSIDE the
+# existing sent_*/absa_* columns: nothing here changes any existing column's
+# name, semantics or value, and every one of these is NaN when fusion cannot
+# be computed (e.g. the ABSA score columns fusion needs are absent).
+FUSION_FEATURE_COLUMNS = [
+    f"fus_{variant}_{agg}"
+    for variant in fusion.AGGREGATED_VARIANTS
+    for agg in fusion.FUSION_AGGREGATIONS
 ]
 
 # Sentence flags that put a sentence into a bucket some aggregate reads.
@@ -495,6 +521,18 @@ def aggregate_article_features(
         column changes in name, semantics or value because of them. If the
         absa score columns are absent the whole family is NaN and one warning
         is logged — the pipeline works with ABSA off.
+      * fus_*: article-level aggregates of the conf_graft / conf_graft_soft
+        fusion variants (stock_predictor.text.fusion), computed by
+        fusion.aggregate_fusion_features() and merged in here rather than
+        inlined in this loop -- fusion.py owns the fusion logic, this module
+        only wires it into the article feature table. Same soft feature-detect
+        as ABSA: fusion needs both the FinBERT AND the ABSA score columns
+        (score_variants() reads pos/neg/absa_pos/absa_neg/absa_neu), so if the
+        ABSA score columns are absent the whole fus_* family is NaN and
+        exactly ONE warning is logged -- the pipeline works with fusion off.
+        See FUSION_FEATURE_COLUMNS and fusion.aggregate_fusion_features()'s
+        own docstring for the population, the four aggregations, and why
+        top3_pos/top3_neg exist.
     """
     if len(sentences_df) == 0:
         return pd.DataFrame(
@@ -530,6 +568,7 @@ def aggregate_article_features(
                 "sent_headline_neg",
                 "sent_headline_neu",
                 *ABSA_FEATURE_COLUMNS,
+                *FUSION_FEATURE_COLUMNS,
             ]
         )
 
@@ -563,6 +602,24 @@ def aggregate_article_features(
             f"({', '.join(ABSA_SCORE_COLUMNS)}) on the sentence table; "
             f"the {len(ABSA_FEATURE_COLUMNS)} absa_* features will be all-NaN"
         )
+
+    # fus_* features: fusion.score_variants() needs FinBERT's pos/neg AND
+    # ABSA's absa_pos/absa_neg/absa_neu, so this reuses `has_absa` as the
+    # gate rather than re-deriving a separate check -- fusion can never be
+    # computed on a sentence table ABSA cannot be computed on either. Same
+    # soft feature-detect and single-warning contract as ABSA above.
+    has_fusion = has_absa
+    if not has_fusion:
+        logger.warning(
+            "aggregate_article_features: no ABSA score columns on the "
+            f"sentence table; the {len(FUSION_FEATURE_COLUMNS)} fus_* "
+            "features will be all-NaN"
+        )
+        fusion_features = pd.DataFrame(
+            {"article_id": sentences_df["article_id"].unique()}
+        ).assign(**{c: float("nan") for c in FUSION_FEATURE_COLUMNS})
+    else:
+        fusion_features = fusion.aggregate_fusion_features(sentences_df)
 
     def _absa_mean(frame) -> tuple[float, float, float]:
         """Mean absa_pos/neg/neu over `frame`, or NaN on an empty selection.
@@ -700,6 +757,11 @@ def aggregate_article_features(
         )
 
     result = pd.DataFrame(rows)
+
+    # fus_*: left-merge so every article_id in `result` keeps its row even if
+    # fusion_features (built from the same sentences_df) somehow disagrees on
+    # membership; in practice the two are built from the same article_id set.
+    result = result.merge(fusion_features, on="article_id", how="left")
 
     if headline_scores is not None:
         headline_cols = headline_scores[["article_id", "pos", "neg", "neu"]].rename(

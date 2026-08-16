@@ -6,6 +6,7 @@ from stock_predictor.config import LEAD_SENTENCE_WINDOW
 from stock_predictor.text import sentiment as sentiment_module
 from stock_predictor.text.sentiment import (
     ABSA_FEATURE_COLUMNS,
+    FUSION_FEATURE_COLUMNS,
     aggregate_article_features,
     analyze,
     hash_text,
@@ -582,6 +583,64 @@ def test_aggregate_article_features_multiple_articles_independent():
 
 
 # ---------------------------------------------------------------------------
+# fus_* fusion columns wired into aggregate_article_features()
+# ---------------------------------------------------------------------------
+
+
+def _sent_row_with_absa(
+    article_id, sent_idx, text, mentions_target, mentions_other, pos, neg, neu, absa_pos, absa_neg, absa_neu
+):
+    row = _sent_row(article_id, sent_idx, text, mentions_target, mentions_other, pos, neg, neu)
+    row["absa_pos"] = absa_pos
+    row["absa_neg"] = absa_neg
+    row["absa_neu"] = absa_neu
+    return row
+
+
+def test_aggregate_article_features_includes_fusion_columns():
+    rows = [
+        _sent_row_with_absa(
+            1, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1, 0.7, 0.2, 0.1
+        ),
+        _sent_row_with_absa(
+            1, 1, "Tesla stock dropped later.", True, False, 0.2, 0.7, 0.1, 0.3, 0.6, 0.1
+        ),
+    ]
+    df = pd.DataFrame(rows)
+    result = aggregate_article_features(df)
+
+    assert len(FUSION_FEATURE_COLUMNS) == 12
+    for col in FUSION_FEATURE_COLUMNS:
+        assert col in result.columns
+
+    row = result.iloc[0]
+    # Population is non-empty (2 target, non-boilerplate sentences with real
+    # scores), so these should be real numbers, not NaN -- check all six
+    # aggregations for both promoted variants, not just _mean, so this test
+    # actually exercises the full 12-column list rather than a fraction of it.
+    for variant in ("conf_graft", "conf_graft_soft"):
+        for agg in ("mean", "median", "lead", "top3_pos", "top3_neg", "spread"):
+            assert not pd.isna(row[f"fus_{variant}_{agg}"])
+
+
+def test_aggregate_article_features_fusion_nan_when_absa_absent():
+    # No absa_pos/absa_neg/absa_neu columns at all -- fusion cannot be
+    # computed. The whole fus_* family must be NaN and the function must not
+    # raise (same soft feature-detect contract as absa_*).
+    rows = [
+        _sent_row(1, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1),
+        _sent_row(1, 1, "Tesla stock dropped later.", True, False, 0.2, 0.7, 0.1),
+    ]
+    df = pd.DataFrame(rows)
+    result = aggregate_article_features(df)
+
+    assert len(FUSION_FEATURE_COLUMNS) == 12
+    for col in FUSION_FEATURE_COLUMNS:
+        assert col in result.columns
+        assert pd.isna(result.iloc[0][col])
+
+
+# ---------------------------------------------------------------------------
 # analyze(): single-article entry point (real model)
 # ---------------------------------------------------------------------------
 
@@ -899,10 +958,15 @@ def test_analyze_unchanged_keys(tmp_path):
         # so these are present and all-NaN -- which is the contract: the
         # pipeline works with ABSA off.
         *ABSA_FEATURE_COLUMNS,
+        # fus_* fusion columns: analyze() does not run ABSA either, so fusion
+        # cannot be computed -- these are present and all-NaN for the same
+        # reason the absa_* columns are.
+        *FUSION_FEATURE_COLUMNS,
     }
     assert set(result.keys()) == expected_keys
     assert not pd.isna(result["sent_entity_pos"])
     assert all(pd.isna(result[c]) for c in ABSA_FEATURE_COLUMNS)
+    assert all(pd.isna(result[c]) for c in FUSION_FEATURE_COLUMNS)
 
 
 @pytest.mark.slow
