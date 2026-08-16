@@ -1,5 +1,14 @@
 # Data
 
+# Intermediate artifacts: model caches and pre-run snapshots. All are
+# regenerable from data/processed + the pipeline, and they are large (~20MB
+# together, dominated by the sentence-table snapshots the notebooks take before
+# overwriting their outputs). The caches are worth KEEPING ON DISK -- a cold
+# run without them is ~20 minutes of CPU inference -- they just should not be
+# in git history. The final outputs (data/sentences.parquet,
+# data/articles.parquet) stay tracked.
+data/interim/*.parquet
+
 
 # Mac OS-specific storage files
 .DS_Store
