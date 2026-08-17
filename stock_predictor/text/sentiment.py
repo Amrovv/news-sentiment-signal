@@ -2,7 +2,7 @@
 
 Runs downstream of `stock_predictor.text.entity_filter`, which produces a
 sentence table with columns article_id, sent_idx, text, mentions_target,
-mentions_other, mentions_ceo, is_comparative, resolved_by_anaphora,
+mentions_ceo, resolved_by_anaphora,
 is_boilerplate, char_len.
 
 Pipeline:
@@ -79,12 +79,6 @@ ABSA_FEATURE_COLUMNS = [
     "absa_entity_pos",
     "absa_entity_neg",
     "absa_entity_neu",
-    "absa_entity_excl_comp_pos",
-    "absa_entity_excl_comp_neg",
-    "absa_entity_excl_comp_neu",
-    "absa_other_mean_pos",
-    "absa_other_mean_neg",
-    "absa_other_mean_neu",
     "absa_ceo_pos",
     "absa_ceo_neg",
     "absa_ceo_neu",
@@ -107,7 +101,7 @@ FUSION_FEATURE_COLUMNS = [
 
 # Sentence flags that put a sentence into a bucket some aggregate reads.
 # See needs_score() -- this list is the enumeration behind that predicate.
-CONSUMED_MENTION_COLUMNS = ["mentions_target", "mentions_other", "mentions_ceo"]
+CONSUMED_MENTION_COLUMNS = ["mentions_target", "mentions_ceo"]
 
 
 def needs_score(sentences_df: pd.DataFrame) -> pd.Series:
@@ -115,7 +109,7 @@ def needs_score(sentences_df: pd.DataFrame) -> pd.Series:
     aggregate_article_features().
 
     Definition:
-        (mentions_target | mentions_other | mentions_ceo) & ~is_boilerplate
+        (mentions_target | mentions_ceo) & ~is_boilerplate
 
     THIS PREDICATE IS THE SINGLE SOURCE OF TRUTH shared by the scorer
     (score_sentence_table(), analyze()) and the aggregator
@@ -123,11 +117,12 @@ def needs_score(sentences_df: pd.DataFrame) -> pd.Series:
     score-derived column in aggregate_article_features() reads from exactly
     three sentence sets, all taken from the article's NON-boilerplate body:
 
-        mentions_target -> sent_entity_*, sent_entity_excl_comp_*,
-                           sent_entity_maxmag_*, sent_entity_lead_*
-        mentions_other  -> sent_other_mean_*
+        mentions_target -> sent_entity_*, sent_entity_maxmag_*, sent_entity_lead_*
         mentions_ceo    -> sent_ceo_* (CEO-only: mentions_ceo & ~mentions_target,
                            a subset of the mentions_ceo rows kept here)
+
+    The mentions_other bucket was removed with other-company detection: nothing
+    reads those rows any more, so scoring them was pure waste.
 
     A sentence in none of those buckets, and every boilerplate sentence, is
     never read by any feature: the remaining columns (n_total_sents,
@@ -352,7 +347,7 @@ def score_sentence_table(
     Selective scoring (only_relevant=True, the DEFAULT): only rows where
     needs_score() is True are sent to FinBERT -- i.e. sentences in one of the
     three buckets aggregate_article_features() actually reads
-    (mentions_target / mentions_other / mentions_ceo), excluding boilerplate.
+    (mentions_target / mentions_ceo), excluding boilerplate.
     needs_score() is the single source of truth shared with the aggregator, so
     a filtered run and a full run produce byte-identical article features while
     the filtered run does ~60% fewer forward passes on the real corpus.
@@ -470,8 +465,7 @@ def aggregate_article_features(
         target-sentence-derived means. 0 would look like "neutral
         sentiment" (a real, scored value), silently conflating "no
         signal" with "measured and neutral". Same reasoning applied to
-        sent_other_mean_* and sent_entity_lead_* when their respective
-        sentence sets are empty.
+        sent_entity_lead_* when its sentence set is empty.
       * "maxmag" (largest-magnitude target sentence): for each article,
         among its mentions_target sentences, pick the one with the largest
         |pos - neg| and store ITS three raw probabilities as
@@ -495,15 +489,15 @@ def aggregate_article_features(
         score-consuming sentence sets are selected through needs_score(),
         which is the shared contract with score_sentence_table() -- see that
         function's docstring.
-      * sent_entity_excl_comp_*: the target mean recomputed with comparative
-        sentences dropped. A sentence naming two companies ("Micron ... has
-        overtaken Tesla") carries sentiment that belongs to the OTHER
-        company, but FinBERT scores the sentence as a whole and credits it to
-        the target. Notebook 2.0 section 3.1 found roughly 4 of the top-10
-        most-positive articles were driven by exactly this pattern, and
-        because rivals are usually named when they are winning, the pollution
-        is asymmetric — it inflates the positive tail specifically. Both the
-        plain and the excluded mean are kept so the effect stays measurable.
+      * The sent_entity_excl_comp_* / absa_entity_excl_comp_* family and the
+        sent_other_mean_* / absa_other_mean_* family were REMOVED along with
+        other-company detection. excl_comp existed only because FinBERT scores a
+        whole sentence and could not tell whose sentiment it was, so deleting
+        comparative sentences was the only available defence; ABSA scores toward
+        the aspect and reads them correctly (notebook 2.5 §1.2 already declined
+        to build a fusion twin for exactly this reason). Both families depended
+        on a registry of rival companies that no longer exists.
+
       * sent_ceo_*: mean over CEO-only sentences (mentions_ceo and NOT
         mentions_target). The 2.0 ablation showed folding CEO mentions into
         the target mean shifts the mean very little on average but touches
@@ -512,8 +506,7 @@ def aggregate_article_features(
       * Columns whose sentence set is empty are NaN, never 0 — the same
         no-signal-vs-measured-neutral rule used throughout this module.
       * absa_*: aspect-aware twins of four of the sent_* means
-        (absa_entity_*, absa_entity_excl_comp_*, absa_other_mean_*,
-        absa_ceo_*), computed from the absa_pos/neg/neu columns
+        (absa_entity_*, absa_ceo_*), computed from the absa_pos/neg/neu columns
         stock_predictor.text.absa attaches to the sentence table. They read
         EXACTLY the same four sentence selections as their FinBERT
         counterparts, so a difference between a pair is a difference between
@@ -541,15 +534,9 @@ def aggregate_article_features(
                 "sent_entity_pos",
                 "sent_entity_neg",
                 "sent_entity_neu",
-                "sent_entity_excl_comp_pos",
-                "sent_entity_excl_comp_neg",
-                "sent_entity_excl_comp_neu",
                 "sent_entity_maxmag_pos",
                 "sent_entity_maxmag_neg",
                 "sent_entity_maxmag_neu",
-                "sent_other_mean_pos",
-                "sent_other_mean_neg",
-                "sent_other_mean_neu",
                 "sent_entity_lead_pos",
                 "sent_entity_lead_neg",
                 "sent_entity_lead_neu",
@@ -557,8 +544,6 @@ def aggregate_article_features(
                 "sent_ceo_neg",
                 "sent_ceo_neu",
                 "n_entity_sents",
-                "n_other_sents",
-                "n_comparative_sents",
                 "n_boilerplate_sents",
                 "n_ceo_sents",
                 "n_total_sents",
@@ -576,7 +561,7 @@ def aggregate_article_features(
     # boilerplate flagging existed) may not carry these columns; default them
     # to all-False once, up front, rather than guarding at every use site.
     sentences_df = sentences_df.copy().reset_index(drop=True)
-    for col in ("is_boilerplate", "is_comparative"):
+    for col in ("is_boilerplate",):
         if col not in sentences_df.columns:
             sentences_df[col] = False
         else:
@@ -643,21 +628,16 @@ def aggregate_article_features(
         grp_consumed = consumed.loc[group.index]
 
         # needs_score bucket 1 (mentions_target): sent_entity_*,
-        # sent_entity_excl_comp_*, sent_entity_maxmag_*, sent_entity_lead_*.
+        # sent_entity_maxmag_*, sent_entity_lead_*.
         target = group[grp_consumed & group["mentions_target"]]
-        # needs_score bucket 2 (mentions_other): sent_other_mean_*.
-        other = group[grp_consumed & group["mentions_other"]]
         lead_target = target[target["sent_idx"] < LEAD_SENTENCE_WINDOW]
-        target_excl_comp = target[~target["is_comparative"]]
         # needs_score bucket 3 (mentions_ceo): sent_ceo_*, narrowed here to
         # CEO-only sentences -- a subset of the mentions_ceo rows needs_score()
         # keeps, so it is covered by the predicate.
         ceo_only = group[grp_consumed & group["mentions_ceo"] & ~group["mentions_target"]]
 
         n_entity = len(target)
-        n_other = len(other)
         n_total = len(body)
-        n_comparative = int(target["is_comparative"].sum())
         n_boilerplate = int(group["is_boilerplate"].sum())
         n_ceo = len(ceo_only)
 
@@ -675,26 +655,12 @@ def aggregate_article_features(
             sent_entity_pos = sent_entity_neg = sent_entity_neu = float("nan")
             maxmag_pos = maxmag_neg = maxmag_neu = float("nan")
 
-        if n_other > 0:
-            other_pos = other["pos"].mean()
-            other_neg = other["neg"].mean()
-            other_neu = other["neu"].mean()
-        else:
-            other_pos = other_neg = other_neu = float("nan")
-
         if len(lead_target) > 0:
             lead_pos = lead_target["pos"].mean()
             lead_neg = lead_target["neg"].mean()
             lead_neu = lead_target["neu"].mean()
         else:
             lead_pos = lead_neg = lead_neu = float("nan")
-
-        if len(target_excl_comp) > 0:
-            excl_pos = target_excl_comp["pos"].mean()
-            excl_neg = target_excl_comp["neg"].mean()
-            excl_neu = target_excl_comp["neu"].mean()
-        else:
-            excl_pos = excl_neg = excl_neu = float("nan")
 
         if n_ceo > 0:
             ceo_pos = ceo_only["pos"].mean()
@@ -708,8 +674,6 @@ def aggregate_article_features(
         # directly comparable. Bucket membership is unchanged: it still comes
         # from needs_score() and the existing selections above.
         absa_entity = _absa_mean(target)
-        absa_excl = _absa_mean(target_excl_comp)
-        absa_other = _absa_mean(other)
         absa_ceo = _absa_mean(ceo_only)
 
         rows.append(
@@ -718,15 +682,9 @@ def aggregate_article_features(
                 "sent_entity_pos": sent_entity_pos,
                 "sent_entity_neg": sent_entity_neg,
                 "sent_entity_neu": sent_entity_neu,
-                "sent_entity_excl_comp_pos": excl_pos,
-                "sent_entity_excl_comp_neg": excl_neg,
-                "sent_entity_excl_comp_neu": excl_neu,
                 "sent_entity_maxmag_pos": maxmag_pos,
                 "sent_entity_maxmag_neg": maxmag_neg,
                 "sent_entity_maxmag_neu": maxmag_neu,
-                "sent_other_mean_pos": other_pos,
-                "sent_other_mean_neg": other_neg,
-                "sent_other_mean_neu": other_neu,
                 "sent_entity_lead_pos": lead_pos,
                 "sent_entity_lead_neg": lead_neg,
                 "sent_entity_lead_neu": lead_neu,
@@ -734,8 +692,6 @@ def aggregate_article_features(
                 "sent_ceo_neg": ceo_neg,
                 "sent_ceo_neu": ceo_neu,
                 "n_entity_sents": n_entity,
-                "n_other_sents": n_other,
-                "n_comparative_sents": n_comparative,
                 "n_boilerplate_sents": n_boilerplate,
                 "n_ceo_sents": n_ceo,
                 "n_total_sents": n_total,
@@ -744,12 +700,6 @@ def aggregate_article_features(
                 "absa_entity_pos": absa_entity[0],
                 "absa_entity_neg": absa_entity[1],
                 "absa_entity_neu": absa_entity[2],
-                "absa_entity_excl_comp_pos": absa_excl[0],
-                "absa_entity_excl_comp_neg": absa_excl[1],
-                "absa_entity_excl_comp_neu": absa_excl[2],
-                "absa_other_mean_pos": absa_other[0],
-                "absa_other_mean_neg": absa_other[1],
-                "absa_other_mean_neu": absa_other[2],
                 "absa_ceo_pos": absa_ceo[0],
                 "absa_ceo_neg": absa_ceo[1],
                 "absa_ceo_neu": absa_ceo[2],
@@ -886,8 +836,6 @@ def analyze(
         row = {c: float("nan") for c in empty.columns}
         row["article_id"] = synthetic_article_id
         row["n_entity_sents"] = 0
-        row["n_other_sents"] = 0
-        row["n_comparative_sents"] = 0
         row["n_boilerplate_sents"] = 0
         row["n_ceo_sents"] = 0
         row["n_total_sents"] = 0

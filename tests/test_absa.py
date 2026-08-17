@@ -154,13 +154,6 @@ def test_build_pairs_invalid_span_falls_back_to_unchanged_text(start, end):
     assert out.loc[0, "absa_aspect"] == "Tesla"
 
 
-def test_build_pairs_other_company_uses_that_company_display_name():
-    text = "Ford reported strong truck sales in the quarter."
-    out = absa.build_pairs(_frame([_sentence_row(text, mentions_other=True)]), TICKER)
-    assert out.loc[0, "absa_text"] == text
-    assert out.loc[0, "absa_aspect"] == "Ford"
-
-
 def test_build_pairs_ceo_only_uses_person_alias_and_never_substitutes():
     # Musk is a legitimate aspect in his own right; the person tier has never
     # been allowed to speak for the company, and substitution here would make it
@@ -374,8 +367,6 @@ def test_absa_aggregates_read_the_same_buckets_as_finbert():
     f = aggregate_article_features(df).iloc[0]
 
     assert f["absa_entity_pos"] == pytest.approx((0.8 + 0.1) / 2)
-    assert f["absa_entity_excl_comp_pos"] == pytest.approx(0.8)
-    assert f["absa_other_mean_pos"] == pytest.approx((0.1 + 0.4) / 2)
     assert f["absa_ceo_pos"] == pytest.approx(0.6)
     # Empty bucket -> NaN, never 0.
     ceo_less = df[df["sent_idx"] != 3]
@@ -484,6 +475,73 @@ def test_build_pairs_never_substitutes_over_a_personal_possessive():
     assert out.loc[0, "absa_aspect"] == "Tesla"
 
 
+# ---------------------------------------------------------------------------
+# Never split a contraction: a bare-pronoun span followed by a clitic must
+# consume the clitic and expand it, rather than leaving it stitched onto the
+# injected name ("It's" -> span covers only "It" -> "Tesla's also profitable",
+# which reads as a possessive instead of "Tesla IS also profitable").
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,start,end,expected",
+    [
+        # "'s" is the COPULA here, not a possessive, precisely because the span
+        # is the bare pronoun "It", not "Its".
+        ("It's also profitable this quarter.", 0, 2,
+         "Tesla is also profitable this quarter."),
+        ("They're also profitable this quarter.", 0, 4,
+         "Tesla is also profitable this quarter."),
+        ("It'll do well next quarter.", 0, 2,
+         "Tesla will do well next quarter."),
+        ("They've already invested heavily.", 0, 4,
+         "Tesla has already invested heavily."),
+        ("It'd be a surprise if it missed.", 0, 2,
+         "Tesla would be a surprise if it missed."),
+    ],
+)
+def test_build_pairs_expands_contraction_instead_of_splitting_it(text, start, end, expected):
+    out = absa.build_pairs(
+        _frame(
+            [
+                _sentence_row(
+                    text,
+                    mentions_target=True,
+                    resolved_by_coref=True,
+                    anaphor_char_start=start,
+                    anaphor_char_end=end,
+                )
+            ]
+        ),
+        TICKER,
+    )
+    assert out.loc[0, "absa_text"] == expected
+    assert out.loc[0, "absa_aspect"] == "Tesla"
+    assert out.loc[0, "text"] == text
+
+
+def test_substitute_expands_clitic_directly():
+    # Unit-level check on _substitute() itself, isolated from build_pairs()'s
+    # row plumbing.
+    text = "It's also profitable"
+    new_text, ok = absa._substitute(text, 0, 2, "Tesla")
+    assert ok is True
+    assert new_text == "Tesla is also profitable"
+    # NOT the buggy "Tesla's also profitable" -- that reads as a possessive.
+    assert new_text != "Tesla's also profitable"
+
+
+def test_substitute_does_not_expand_a_genuinely_possessive_surface():
+    # A possessive surface ("Its") is not a bare pronoun, so it must keep
+    # _inflect_name()'s existing "<Name>'s" behaviour untouched -- there is no
+    # clitic to consume because the span already covers the whole possessive
+    # form and nothing follows it that looks like a clitic on a bare pronoun.
+    text = "Its revenue increased"
+    new_text, ok = absa._substitute(text, 0, 3, "Tesla")
+    assert ok is True
+    assert new_text == "Tesla's revenue increased"
+
+
 def test_inflect_name_preserves_leading_capitalisation():
     # A capitalised surface (sentence-initial) yields a capitalised injection,
     # even when the display name itself is lowercase.
@@ -588,41 +646,3 @@ def test_build_pairs_non_anaphoric_span_leaves_text_unchanged():
     assert out.loc[0, "absa_aspect"] == "Tesla"
 
 
-# ---------------------------------------------------------------------------
-# Other-company aspect from the recorded key (registry or NER)
-# ---------------------------------------------------------------------------
-
-
-def test_build_pairs_ner_keyed_other_company_uses_the_surface_form():
-    # A NER-sourced other company has no registry entry, so its normalized
-    # surface form IS the aspect, title-cased. Before this these rows were
-    # dropped entirely (11,370 of them on the corpus).
-    text = "Avidity Biosciences announced a new trial this week in Boston."
-    row = _sentence_row(text, mentions_other=True)
-    row["other_source"] = "ner"
-    row["other_key"] = "avidity biosciences"
-    out = absa.build_pairs(_frame([row]), TICKER)
-    assert out.loc[0, "absa_text"] == text
-    assert out.loc[0, "absa_aspect"] == "Avidity Biosciences"
-
-
-def test_build_pairs_registry_keyed_other_company_uses_the_display_name():
-    text = "Ford Motor reported strong truck sales in the quarter."
-    row = _sentence_row(text, mentions_other=True)
-    row["other_source"] = "registry"
-    row["other_key"] = "F"
-    out = absa.build_pairs(_frame([row]), TICKER)
-    assert out.loc[0, "absa_aspect"] == "Ford"
-
-
-def test_build_pairs_other_company_with_no_key_at_all_is_left_unscored():
-    # An other company reached by coref/anaphora names nobody and carries no
-    # key: no aspect is recoverable, so the row stays unscored (NaN), as before.
-    text = "The company also raised prices across the lineup this quarter."
-    row = _sentence_row(text, mentions_other=True, resolved_by_coref=True,
-                        anaphor_char_start=0, anaphor_char_end=11)
-    row["other_source"] = ""
-    row["other_key"] = ""
-    out = absa.build_pairs(_frame([row]), TICKER)
-    assert out.loc[0, "absa_aspect"] == ""
-    assert out.loc[0, "absa_text"] == ""

@@ -4,11 +4,12 @@ WHY THIS EXISTS. FinBERT scores a SENTENCE. The pipeline asks a different
 question: how does this sentence read ABOUT THE TARGET COMPANY? Those come apart
 exactly where it hurts most. "Build-A-Bear outperformed Tesla" is an
 unambiguously positive sentence and FinBERT scores it positive; credited to
-Tesla it is backwards. sentiment.aggregate_article_features() already carries a
-sent_entity_excl_comp_* mean precisely because notebook 2.0 measured this
-pollution and could only respond by DELETING the offending sentences. An
-aspect-based model is handed the aspect term explicitly and scores sentiment
-toward it, so the comparative sentence can be kept and read correctly instead.
+Tesla it is backwards. Notebook 2.0 measured that pollution and could only
+respond by DELETING the offending sentences (the since-removed
+sent_entity_excl_comp_* family). An aspect-based model is handed the aspect term
+explicitly and scores sentiment toward it, so the comparative sentence can be
+kept and read correctly instead -- which is why that exclusion family, and the
+other-company detection that drove it, were both retired.
 
 THIS RUNS ALONGSIDE FinBERT, NOT INSTEAD OF IT. Every column this module feeds
 into sentiment.aggregate_article_features() is a NEW absa_* column parallel to
@@ -294,6 +295,64 @@ _POSSESSIVE_PRONOUNS = frozenset({"its", "their", "his", "her", "our", "your"})
 _CONTRACTIONS_IS = frozenset({"it's", "it’s", "he's", "he’s", "she's", "she’s"})
 _CONTRACTIONS_ARE = frozenset({"they're", "they’re", "we're", "we’re"})
 
+# Bare (non-possessive) pronoun surfaces that may be handed to _substitute()
+# with a TRAILING CLITIC not included in [start, end) -- see
+# _consume_trailing_clitic()'s docstring for why the span and the clitic can
+# be misaligned this way.
+_BARE_PRONOUN_SURFACES = frozenset({"it", "they", "he", "she"})
+
+# Apostrophe clitics that attach directly to a pronoun with no space
+# ("It's", "They're", "We'd"), ordered longest-first so a prefix match (e.g.
+# "'s" inside "'re") never wins over the correct, longer one. Both the
+# straight and curly apostrophe forms are listed since scraped news text uses
+# both. Maps the clitic to the copula/auxiliary it expands into -- a SINGULAR
+# company subject, since the injected name is always one company:
+#   "'s"  -> "is"    (copula, not the possessive -- see the docstring below)
+#   "'re" -> "is"    ("It's"/"They're" + company both read as singular)
+#   "'ll" -> "will"
+#   "'ve" -> "has"
+#   "'d"  -> "would"
+_CLITIC_EXPANSIONS = [
+    ("'ll", "will"), ("’ll", "will"),
+    ("'ve", "has"), ("’ve", "has"),
+    ("'re", "is"), ("’re", "is"),
+    ("'s", "is"), ("’s", "is"),
+    ("'d", "would"), ("’d", "would"),
+]
+
+
+def _consume_trailing_clitic(text: str, surface: str, end: int) -> tuple[str | None, int]:
+    """Detect an apostrophe clitic glued to the END of the replaced span.
+
+    entity_filter's resolved anaphor span sometimes covers ONLY the pronoun
+    ("It" at [0, 2)) while the surrounding text reads "It's also profitable" --
+    the clitic "'s" is a separate token immediately after the span, not part
+    of it. Naively replacing [start, end) then leaves the orphaned clitic
+    stitched onto the injected name: "It's also profitable" became "Tesla's
+    also profitable", which reads as a POSSESSIVE ("Tesla's [something] also
+    profitable") when the sentence actually means "Tesla IS also profitable".
+    Measured on the corpus: ~17 rows this way dropped a verb entirely and ~5
+    split a clitic mid-word ("we're" -> "Tesla're").
+
+    Returns (expansion, clitic_len) when `surface` (the text the span itself
+    covers) is a BARE, non-possessive pronoun ("it", "they", ...) AND `text`
+    immediately after `end` begins with one of _CLITIC_EXPANSIONS' clitics;
+    otherwise (None, 0). Gated on "bare pronoun" specifically because a
+    genuinely possessive surface ("its", "the company's") is already handled
+    by _inflect_name() and must keep its existing "<Name>'s" behaviour -- the
+    "'s" this function consumes is always the COPULA, which is only possible
+    because the span it follows was a bare subject pronoun, not a possessive
+    one.
+    """
+    low = (surface or "").strip().lower()
+    if low not in _BARE_PRONOUN_SURFACES:
+        return None, 0
+    tail = text[end:]
+    for clitic, expansion in _CLITIC_EXPANSIONS:
+        if tail.lower().startswith(clitic.lower()):
+            return expansion, len(clitic)
+    return None, 0
+
 
 def _inflect_name(name: str, surface: str) -> str:
     """Inflect `name` to fit grammatically where `surface` stood.
@@ -348,6 +407,15 @@ def _substitute(text: str, start, end, name: str) -> tuple[str, bool]:
     raises: a bad offset is a data-quality event on one sentence, and the caller
     logs it at debug and scores the sentence unsubstituted rather than losing
     the row or the run.
+
+    NEVER SPLIT A CONTRACTION. If the span covers a bare pronoun ("It") and
+    text[end:] begins with an apostrophe clitic ("'s", "'re", "'ll", "'ve",
+    "'d") that is not part of [start, end), the clitic is consumed as part of
+    the replaced span and EXPANDED into the injected text ("It's also
+    profitable" -> "Tesla is also profitable", never "Tesla's also
+    profitable" — the latter reads as a possessive, and "'s" here is the
+    copula, not a possessive, precisely because the span was a bare pronoun).
+    See _consume_trailing_clitic().
     """
     try:
         if start is None or end is None or pd.isna(start) or pd.isna(end):
@@ -357,7 +425,12 @@ def _substitute(text: str, start, end, name: str) -> tuple[str, bool]:
         return text, False
     if s < 0 or e > len(text) or e <= s:
         return text, False
-    return text[:s] + _inflect_name(name, text[s:e]) + text[e:], True
+    surface = text[s:e]
+    expansion, clitic_len = _consume_trailing_clitic(text, surface, e)
+    if expansion is not None:
+        injected = _inflect_name(name, surface)
+        return text[:s] + f"{injected} {expansion}" + text[e + clitic_len :], True
+    return text[:s] + _inflect_name(name, surface) + text[e:], True
 
 
 def _substitute_resolved(text: str, start, end, name: str) -> tuple[str, str]:
@@ -422,31 +495,6 @@ def _substitute_resolved(text: str, start, end, name: str) -> tuple[str, str]:
     return new_text, "substituted"
 
 
-def _other_aspect(key, source, text: str, other_patterns: dict) -> str | None:
-    """The aspect term for a row tagged mentions_other, or None if unrecoverable.
-
-    Registry-sourced keys map to the registry display name, as they always have.
-    NER-sourced keys have no registry entry — they ARE the normalized surface
-    form entity_filter recorded ("avidity biosciences") — so the surface itself
-    is the aspect, title-cased for readability. Before this, _display_name()
-    returned None for every one of them and the row was dropped: 11,370 of the
-    23,257 mentions_other rows on the corpus had no aspect at all, which is the
-    entire reason absa_other_mean_* was so much thinner than sent_other_mean_*.
-
-    Rows whose table predates the other_key column (or that were built by hand)
-    fall back to re-deriving a registry key from the text, the old behaviour.
-    """
-    key = (key or "").strip() if isinstance(key, str) else ""
-    if key and source == "ner":
-        return key.title()
-    if key:
-        name = _display_name(key)
-        if name:
-            return name
-    fallback = _earliest_other_key(text, other_patterns)
-    return _display_name(fallback) if fallback else None
-
-
 def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     """Turn a TAGGED sentence table into (text, aspect) scoring pairs.
 
@@ -495,31 +543,16 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
          leave the aspect absent from the text — the model then reads the
          sentence with no aspect anchor, which is the same position FinBERT is
          in, so it degrades to sentence sentiment rather than to nonsense.
-      4. mentions_other and NOT mentions_target: aspect = that company's
-         display name (registry) or its title-cased NER surface form, from the
-         other_key/other_source columns — see _other_aspect(); substituted the
-         same way when the row was resolved rather than named.
-      5. mentions_ceo and NOT mentions_target: aspect = the matched person
+      4. mentions_ceo and NOT mentions_target: aspect = the matched person
          alias as it appears in the sentence ("Musk", "Elon Musk"), text
          unchanged. The company is deliberately NOT substituted here: Musk is a
          legitimate aspect in his own right, and the person tier has never been
          allowed to speak for the company (see entity_filter.tag_sentences()).
 
-    ONE PAIR PER ROW. A comparative sentence is both a target row and an other
-    row, but carries a single absa_aspect, and rule 2/3 gives it the TARGET
-    aspect — which is the right choice, since reading comparatives correctly for
-    the target is the entire motivation for this module. The consequence is that
-    such a row contributes its TARGET-aspect score to absa_other_mean_*, where
-    FinBERT contributes one sentence-level score to both. Documented rather than
-    hidden; absa_entity_excl_comp_* drops these rows anyway.
-
-    KNOWN GAP (narrowed). Rule 4 needs the other company's identity. The
-    sentence table now records it directly (entity_filter's `other_key`), so
-    both registry-named and NER-named other companies get an aspect. What
-    remains unrecoverable is an other company reached by COREF/ANAPHORA: those
-    rows name no company and carry no key, so they get no pair and end up NaN.
-    This still narrows the absa_other_mean_* population relative to
-    sent_other_mean_*; it does not bias the target features at all.
+    ONE ASPECT PER ROW. Only the target and the CEO tier can supply an aspect
+    now that other-company detection is gone, and they are mutually exclusive by
+    rule 4's "NOT mentions_target" guard, so a row can never have two candidate
+    aspects to choose between.
 
     Returns a COPY; the input frame is not mutated.
     """
@@ -531,7 +564,6 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
 
     mask = sentiment.needs_score(out)
     target_name = _display_name(ticker)
-    other_patterns = entity_filter._build_other_company_patterns(ticker)
     person_pattern = entity_filter._build_ticker_patterns(ticker)["person"]
 
     # Default: no pair. Rows the rules below never touch stay empty, which is
@@ -545,13 +577,10 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         "no_span": 0,
         "bad_span": 0,
     }
-    n_unresolved_other = 0
-
     # Positional iteration: `mask` is index-aligned to `out`, so take its values.
     mask_values = mask.to_numpy()
     text_values = out["text"].tolist()
     m_target = out["mentions_target"].fillna(False).astype(bool).tolist()
-    m_other = out["mentions_other"].fillna(False).astype(bool).tolist()
     m_ceo = out["mentions_ceo"].fillna(False).astype(bool).tolist()
     resolved = (
         out.get("resolved_by_coref", pd.Series(False, index=out.index))
@@ -563,14 +592,6 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     ).tolist()
     span_start = out.get("anaphor_char_start", pd.Series([None] * len(out))).tolist()
     span_end = out.get("anaphor_char_end", pd.Series([None] * len(out))).tolist()
-    other_source = (
-        out.get("other_source", pd.Series([""] * len(out), index=out.index))
-        .fillna("")
-        .tolist()
-    )
-    other_key = (
-        out.get("other_key", pd.Series([""] * len(out), index=out.index)).fillna("").tolist()
-    )
 
     for i in range(len(out)):
         if not mask_values[i]:
@@ -597,21 +618,6 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
                 texts[i], aspects[i] = text, name
             continue
 
-        if m_other[i]:
-            name = _other_aspect(other_key[i], other_source[i], text, other_patterns)
-            if name is None:
-                n_unresolved_other += 1
-                continue
-            if resolved[i]:
-                new_text, outcome = _substitute_resolved(
-                    text, span_start[i], span_end[i], name
-                )
-                outcomes[outcome] += 1
-                texts[i], aspects[i] = new_text, name
-            else:
-                texts[i], aspects[i] = text, name
-            continue
-
         if m_ceo[i] and person_pattern is not None:
             m = person_pattern.search(text)
             if m is None:
@@ -624,32 +630,13 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     n_pairs = int(sum(1 for a in aspects if a))
     logger.info(
         f"build_pairs: {n_pairs} pairs built from {int(mask_values.sum())} scoreable rows "
-        f"({len(out)} total); {n_unresolved_other} other-company rows had no recoverable "
-        f"aspect; resolved rows: {outcomes['substituted']} substituted, "
+        f"({len(out)} total); resolved rows: {outcomes['substituted']} substituted, "
         f"{outcomes['person']} left unchanged (person mention), "
         f"{outcomes['not_anaphor']} left unchanged (not a company anaphor), "
         f"{outcomes['no_span']} with no span recorded, "
         f"{outcomes['bad_span']} with an unusable span"
     )
     return out
-
-
-def _earliest_other_key(text: str, other_patterns: dict) -> str | None:
-    """Registry key of the non-target company named EARLIEST in `text`, or None.
-
-    Earliest-mention is the same fallback precedence entity_filter uses when it
-    has no better signal (see resolve_anaphora()); reusing it keeps the aspect we
-    pick consistent with the antecedent the tagger would have picked.
-    """
-    best_key = None
-    best_pos = None
-    for key, pat in other_patterns.items():
-        m = pat.search(text)
-        if m is None:
-            continue
-        if best_pos is None or m.start() < best_pos:
-            best_key, best_pos = key, m.start()
-    return best_key
 
 
 def score_sentence_table(

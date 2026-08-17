@@ -13,7 +13,7 @@ the other-company contrast tag; the "descriptors" tier of EVERY entry feeds
 recency-scoped descriptor resolution (see resolve_anaphora()). This is what
 makes the pipeline ticker-agnostic: TSLA is temporary scaffolding, and with
 ticker="NVDA" Tesla is simply one of the other companies. Also read:
-GENERIC_ANAPHORA, NER_ORG_STOPLIST, ANAPHORA_MAX_GAP, MIN_SENT_CHARS,
+GENERIC_ANAPHORA, ANAPHORA_MAX_GAP, MIN_SENT_CHARS,
 BOILERPLATE_MIN_ARTICLES, SPACY_MODEL, SPACY_PIPE_BATCH_SIZE.
 
 Spans, not strings. The dependency parse that splits the sentences is the same
@@ -23,6 +23,11 @@ can return spaCy Spans (return_spans=True) and the tagging path consumes Spans.
 Callers that only have strings (tests, sentiment.analyze()) may still pass
 strings — they are parsed on demand so that there is exactly ONE tagging
 implementation. See tag_sentences().
+
+Other-company detection is REGISTRY-ONLY. spaCy's NER was briefly used to
+supply a generic ORG-based detector for companies the registry does not know;
+it was removed once ABSA landed (see _get_nlp() for the full reasoning and for
+why the `ner` component itself must stay enabled regardless).
 
 Pipeline:
     split_sentences()  -> sentence-split article bodies with spaCy (batched)
@@ -47,9 +52,9 @@ from stock_predictor.config import (
     COMPANIES,
     GENERIC_ANAPHORA,
     MIN_SENT_CHARS,
-    NER_ORG_STOPLIST,
     SPACY_MODEL,
     SPACY_PIPE_BATCH_SIZE,
+    USE_ANAPHORA_FALLBACK,
     USE_COREF,
 )
 
@@ -73,15 +78,11 @@ _MISSING_SPACE_RE = re.compile(r"(?<=[a-z0-9])([.!?])(?=[A-Z])")
 # phrase ("...by Peter Rawlinson, Tesla's former engineer") does not.
 SUBJECT_DEPS = frozenset({"nsubj", "nsubjpass", "csubj"})
 
-# spaCy entity labels used by the generic (non-registry) other-company
-# detector: ORG supplies the candidates, PERSON is subtractive (see
-# _ner_other_companies()).
-ORG_ENT_LABEL = "ORG"
+# The one spaCy entity label this module consumes. PERSON entities mark
+# mentions that must never be treated as the company — see _is_person_like(),
+# map_coref_clusters() and _coref_hits_in_sentence(). (ORG was consumed too,
+# by the since-removed generic other-company detector; see _get_nlp().)
 PERSON_ENT_LABEL = "PERSON"
-
-# Characters stripped from the end of an ORG entity's surface form before it is
-# used as an antecedent key (spaCy occasionally swallows trailing punctuation).
-_ORG_TRAILING_PUNCT = " \t\r\n.,;:!?'\"()[]-‘’“”"
 
 # Cached spaCy pipeline. Parsing is by far the dominant cost in this module and
 # model load is ~1s; the string-input path of tag_sentences() would otherwise
@@ -98,14 +99,29 @@ def _get_nlp():
     """Load (once, then memoise) the spaCy pipeline used for both sentence
     splitting and entity tagging.
 
-    Only the lemmatizer is excluded. NER used to be excluded too, and turning
-    it back on is not free — it is the second-most expensive component after
-    the parser, and on the full corpus it raised end-to-end tagging wall-clock
-    noticeably (see the notebook's before/after timing). It is paid for because
-    the curated COMPANIES registry demonstrably cannot cover the tail of
-    company names in a news corpus: the measured residual contamination came
-    from companies nobody would think to curate (Avidity Biosciences, Samsung).
-    See _ner_other_companies().
+    ⚠ DO NOT ADD "ner" TO THE EXCLUDE LIST. Only the lemmatizer is excluded,
+    and that is deliberate. NER looks unused now that the ORG-based
+    other-company detector is gone, and disabling it is an obvious-looking
+    optimisation — it is the second-most expensive component after the parser.
+    It is not unused. PERSON entities are load-bearing in three places, and
+    silently emptying doc.ents would break all three without raising:
+
+      * map_coref_clusters(person_spans=...) — stops a PERSON's coreference
+        chain being keyed to a company through an appositive mention like
+        "Tesla CEO Elon Musk". This fixed real corpus bugs (article 140122179,
+        where a 36-mention Musk chain was keyed to Tesla).
+      * _coref_hits_in_sentence() — stops a person mention being chosen as the
+        span the company name is substituted over.
+      * _is_person_like(), which both of the above call.
+
+    HISTORY, so this is not re-litigated. NER was excluded originally, turned
+    on in Wave 4 to power a generic ORG-based other-company detector
+    (_ner_other_companies()), and that detector was later removed: its purpose
+    was to stop sentences naming unregistered companies (Avidity Biosciences,
+    Samsung) from contaminating the target's sentiment, because FinBERT scores
+    a whole sentence and cannot tell whose sentiment it is. ABSA scores toward
+    the aspect, which supersedes that justification. The component itself stays
+    on for PERSON.
     """
     global _NLP
     if _NLP is None:
@@ -185,41 +201,6 @@ def _build_ticker_patterns(ticker: str) -> dict[str, re.Pattern | None]:
     }
 
 
-def _build_other_company_patterns(ticker: str) -> dict[str, re.Pattern]:
-    """Compile one alias pattern per COMPANIES entry that is NOT the target.
-
-    COMPANIES is symmetric: any company can be the target or an "other"
-    company, decided at runtime by `ticker`. So the "other" universe is simply
-    every registry entry except the target's own key, matched on its "names"
-    tier. With ticker="NVDA", Tesla is an other company; with ticker="TSLA",
-    Nvidia is. The old split (a target-only ALIASES dict plus a separate
-    TSLA-corpus-curated OTHER_COMPANIES list) could not express that — Tesla
-    was missing from the "them" list, so a Tesla sentence in an NVDA run got
-    no mentions_other tag at all.
-
-    The alias-overlap filter below is retained as a safety net: any entry
-    sharing a case-insensitive alias with the target's "names" is skipped.
-    Excluding the target by key already covers the normal case, but this
-    guards registry mistakes (e.g. two entries that both list "GM"), which
-    would otherwise make the target its own "other company" and mark every one
-    of its sentences comparative — mentions_target and mentions_other are
-    computed independently, not as an if/elif chain.
-    """
-    target_names = {a.strip().lower() for a in COMPANIES.get(ticker, {}).get("names", [])}
-
-    patterns = {}
-    for name, entry in COMPANIES.items():
-        if name == ticker:
-            continue
-        aliases = entry.get("names", [])
-        if any(a.strip().lower() in target_names for a in aliases):
-            continue
-        pat = _compile_alias_pattern(aliases)
-        if pat is not None:
-            patterns[name] = pat
-    return patterns
-
-
 def _build_descriptor_scopes(ticker: str) -> tuple[re.Pattern | None, dict[str, set[str]]]:
     """Compile every "descriptors" phrase in the registry into one pattern, plus
     a map {lowercased descriptor -> set of antecedent keys that may bear it}.
@@ -240,16 +221,21 @@ def _build_descriptor_scopes(ticker: str) -> tuple[re.Pattern | None, dict[str, 
 
 
 def _build_product_keys() -> frozenset[str]:
-    """Union of every registry entry's "products" tier, in _normalize_org() form.
+    """Union of every registry entry's "products" tier, casefolded.
 
-    Deliberately NOT scoped to the target. A product name is never "another
-    company under discussion" no matter whose product it is, so Tesla's
-    Megapack and Lucid's Air are both suppressed on every run. Scoping this to
-    the target would leave a rival's model names ("the first Air sedans") firing
-    the generic detector as if a company called Air existed.
+    Deliberately NOT scoped to the target. A product name is never the company
+    itself no matter whose product it is, so Tesla's Megapack and Lucid's Air
+    are both suppressed on every run. Scoping this to the target would leave a
+    rival's model names ("the first Air sedans") treated as a company anaphor.
 
-    These strings used to be hard-coded in NER_ORG_STOPLIST. That put one
-    company's product catalogue into a global list, which contradicts the
+    STILL LIVE AFTER THE NER REMOVAL. This tier originally had two consumers:
+    suppressing the generic ORG detector (now gone) and
+    is_substitutable_anaphor(), which refuses to substitute the company name
+    over a product surface. The second consumer is independent of NER and is
+    why PRODUCT_KEYS survives — see is_substitutable_anaphor().
+
+    These strings used to be hard-coded in a global NER stoplist. That put one
+    company's product catalogue into a shared constant, which contradicts the
     ticker-agnostic constraint the COMPANIES registry exists to satisfy: the
     products belong to a company, so they are configured on that company.
     """
@@ -325,22 +311,13 @@ SENTENCE_COLUMNS = [
     "sent_idx",
     "text",
     "mentions_target",
-    "mentions_other",
     "mentions_ceo",
-    "is_comparative",
     "target_is_subject",
     "resolved_by_anaphora",
     # Set when the tag came from neural coreference (coref.py) instead of the
     # recency heuristic. The two are mutually exclusive by construction so the
     # mechanisms stay separately measurable — see resolve_anaphora().
     "resolved_by_coref",
-    "other_source",
-    # WHICH other company the row's explicit other-company mention named: a
-    # COMPANIES key when other_source == "registry", the _normalize_org()
-    # surface form when other_source == "ner", and "" when there was no explicit
-    # other mention (including other companies reached by coref/anaphora). Read
-    # by absa.build_pairs(), which cannot re-derive a NER key from the text.
-    "other_key",
     "is_boilerplate",
     "char_len",
     # The mention span that was resolved (either mechanism), as character
@@ -423,15 +400,20 @@ def _scan_company(pattern: re.Pattern | None, text: str, doc, offset: int):
 
 
 # Closed-class pronouns that can genuinely stand in for a COMPANY (never a
-# person): third-person-plural/neuter "it"/"they" and their inflections, plus
-# first-person-plural "we" (a company speaking of itself, or being quoted as
-# speaking of itself, e.g. "We expect deliveries to grow, the company said").
+# person): third-person-plural/neuter "it"/"they" and their inflections.
 # "he"/"she"/"i"/"you"/"his"/"her" are DELIBERATELY absent -- see
 # is_substitutable_anaphor()'s docstring.
+#
+# First-person-plural ("we"/"our"/"us"/"ours"/"we're") used to be here too, on
+# the theory that it could be the company speaking of itself. A context-aware
+# audit of the corpus substitutions found 10 cases where that produced
+# subject-verb disagreement -- "'We want the future to look like the future,'
+# Musk said" became "Tesla want the future to look like the future" -- because
+# in news prose a first-person plural is almost always inside a quote from a
+# PERSON, not the company speaking in its own voice. Removed accordingly.
 _ANAPHORIC_PRONOUNS = frozenset({
     "it", "its", "they", "their", "them", "theirs",
-    "we", "our", "us", "ours",
-    "it's", "it’s", "they're", "they’re", "we're", "we’re",
+    "it's", "it’s", "they're", "they’re",
 })
 
 # Determiners that may head a short noun phrase ending in a company-denoting
@@ -678,95 +660,6 @@ def _is_expletive_mention(
     return _EXPLETIVE_IT_FALLBACK_RE.match(sentence_text or "") is not None
 
 
-def _normalize_org(text: str) -> str:
-    """Normalize an ORG entity's surface form into an antecedent key.
-
-    Strips a leading "The " and trailing punctuation, then casefolds, so that
-    "The Samsung", "Samsung," and "samsung" all collapse to one key and so that
-    NER_ORG_STOPLIST membership can be tested directly.
-    """
-    cleaned = text.strip()
-    if cleaned[:4].lower() == "the ":
-        cleaned = cleaned[4:]
-    cleaned = cleaned.strip(_ORG_TRAILING_PUNCT)
-    if cleaned.lower().endswith("'s"):
-        cleaned = cleaned[:-2]
-    return cleaned.strip().casefold()
-
-
-def _ner_other_companies(span: Span, target_names: re.Pattern | None, other_patterns: dict):
-    """Generic (non-registry) other-company detection over a sentence's ORG
-    entities.
-
-    Rationale: the curated registry is a precision instrument with terrible
-    recall on the tail. Hand-checking the tagged corpus showed the residual
-    "this sentence is really about someone else" contamination was dominated by
-    companies no one would curate in advance (Avidity Biosciences, Samsung).
-    spaCy's ORG entities cover that tail for free now that the parse is kept.
-
-    Five filters keep the generic rule from firing on non-rivals:
-      1. Entities matching the TARGET's own "names" are dropped. Otherwise the
-         target under a different surface form ("Tesla, Inc.", "Tesla Motors")
-         would mark its own sentence mentions_other.
-      2. Entities matching any registry entry are dropped here — the registry
-         path already handles them, and it owns the canonical antecedent key.
-         NER only supplies companies the registry does not know.
-      3. Entities in NER_ORG_STOPLIST are dropped: exchanges, indices, media
-         outlets, wires and regulators are ORGs but are the venue or source of
-         a story, not a rival whose sentiment could be misattributed.
-      4. Entities matching any registry entry's "products" tier are dropped.
-         spaCy labels product and model names ORG constantly, especially in
-         list-like copy ("Tesla ... : Optimus humanoids, FSD, Robotaxi,
-         Cybercab, Megapack"), which manufactured other-company mentions out
-         of the TARGET'S OWN catalogue. See config.PRODUCTS tier note.
-      5. Person names mislabelled ORG are dropped, via the PERSON entities in
-         the same document ("Wood took advantage of Tesla's 52-week low" —
-         Cathie Wood, tagged ORG on the bare surname). Two rules: an ORG whose
-         span overlaps a PERSON span, and a single capitalised-token ORG whose
-         text also appears as (part of) a PERSON entity ANYWHERE in the same
-         document. The document scope is what makes the second rule work: the
-         full name is introduced once and the bare surname is used thereafter.
-
-    Returns a list of (antecedent_key, start_offset_in_sentence, is_subject),
-    in sentence order.
-    """
-    doc = span.doc
-    person_spans = []
-    person_tokens: set[str] = set()
-    for ent in doc.ents:
-        if ent.label_ != PERSON_ENT_LABEL:
-            continue
-        person_spans.append((ent.start_char, ent.end_char))
-        for token in ent:
-            if token.is_alpha:
-                person_tokens.add(token.text.casefold())
-
-    found = []
-    seen: set[str] = set()
-    for ent in span.ents:
-        if ent.label_ != ORG_ENT_LABEL:
-            continue
-        surface = ent.text
-        if target_names is not None and target_names.search(surface):
-            continue
-        if any(pat.search(surface) for pat in other_patterns.values()):
-            continue
-        if any(ent.start_char < p_end and p_start < ent.end_char for p_start, p_end in person_spans):
-            continue
-        if (
-            len(ent) == 1
-            and ent[0].text[:1].isupper()
-            and ent[0].text.casefold() in person_tokens
-        ):
-            continue
-        key = _normalize_org(surface)
-        if not key or key in NER_ORG_STOPLIST or key in PRODUCT_KEYS or key in seen:
-            continue
-        seen.add(key)
-        found.append((key, ent.start_char - span.start_char, _token_is_subject(ent.root)))
-    return found
-
-
 def _as_spans(sentences, nlp=None) -> list[Span]:
     """Normalize a list of sentences (strings OR Spans) to a list of Spans.
 
@@ -774,7 +667,7 @@ def _as_spans(sentences, nlp=None) -> list[Span]:
     parsed on demand (one nlp.pipe() batch, whole-document span per sentence)
     so that a caller holding only text — tests, and sentiment.analyze() on the
     live-demo path — goes through precisely the same dependency-based subject
-    detection and NER other-company detection as the batch corpus run. Any
+    detection and registry matching as the batch corpus run. Any
     string-only shortcut here would be train/serve skew by construction: the
     demo would tag a sentence differently from the pipeline the model was
     trained on.
@@ -790,7 +683,12 @@ def _as_spans(sentences, nlp=None) -> list[Span]:
 
 
 def resolve_anaphora(
-    article_id, sentences, ticker: str, nlp=None, coref_mentions=None
+    article_id,
+    sentences,
+    ticker: str,
+    nlp=None,
+    coref_mentions=None,
+    use_anaphora_fallback: bool = USE_ANAPHORA_FALLBACK,
 ) -> pd.DataFrame:
     """Walk sentences in order, tracking explicit company mentions and
     resolving anaphora (generic "the company"/sentence-initial "It", and
@@ -802,8 +700,8 @@ def resolve_anaphora(
 
     A sentence's target/other tag can come from two sources:
       1. An explicit mention in that sentence: a "names" alias of the target,
-         a "names" alias of any other COMPANIES entry, or an ORG entity that
-         the registry does not know (see _ner_other_companies()).
+         or a "names" alias of any other COMPANIES entry. Other-company
+         detection is REGISTRY-ONLY — see the note below.
       2. Anaphora resolution: the sentence has no explicit company name of
          its own, but contains a generic anaphor or a company descriptor, so
          it inherits a previously-named company. If nothing eligible has been
@@ -827,19 +725,34 @@ def resolve_anaphora(
     belongs to X. Downstream aggregation keeps a comparative-excluded mean
     alongside the plain one rather than silently picking a side here.
 
-    is_comparative is REGISTRY-ONLY: it is set when the target and a COMPANIES
-    entry are both named, and never when the other company came from NER. The
-    asymmetry is deliberate and follows from the asymmetry of the costs.
-    mentions_other is ADDITIVE — a false positive adds a sentence to a contrast
-    set — whereas is_comparative drives an EXCLUSION (sent_entity_excl_comp_*),
-    so every false positive DELETES a genuine, often strongly polarised, target
-    sentence from the feature. Measured NER precision on the other-company
-    question is ~50-65% (hand-inspection of NER-driven comparatives found
-    roughly half were attribution sources, Zacks metric words, the target's own
-    products, regulators or person names). That is good enough to widen
-    coverage and to supply antecedents, and nowhere near good enough to gate
-    the removal of real signal. Registry matches are curated and effectively
-    100% precise on "is this a company", so they alone gate the exclusion.
+    OTHER-COMPANY DETECTION IS REGISTRY-ONLY. A generic detector over spaCy's
+    ORG entities used to run whenever the registry found nothing, tagging
+    mentions_other for companies the registry does not know (Avidity
+    Biosciences, Samsung) and setting other_source="ner". It was removed.
+
+    Its justification was that FinBERT scores a whole SENTENCE and cannot tell
+    whose sentiment it is, so a sentence about an unregistered rival polluted
+    the target's mean and had to be detected in order to be contrasted away.
+    ABSA scores sentiment TOWARD AN ASPECT, which addresses that directly and
+    supersedes the justification. What the detector still did in practice was
+    populate mentions_other for the sent_other_mean_* / absa_other_mean_*
+    feature family, at a measured precision of ~50-65% — noise documented in
+    notebook 2.3 and never validated. Of 10,502 NER-sourced non-boilerplate
+    rows, only 1,369 also carried mentions_target (the contamination case ABSA
+    now handles); the other 9,133 existed purely to feed that family.
+
+    Consequences, so they are not mistaken for regressions: mentions_other
+    falls substantially, other_source is now only "registry" or "",
+    needs_score() shrinks so runs get cheaper, and sent_other_mean_* becomes
+    precise but narrower, with more articles NaN.
+
+    is_comparative was ALREADY registry-only before the removal and is
+    unchanged by it. The reasoning is worth keeping because it generalises:
+    mentions_other is ADDITIVE — a false positive merely adds a sentence to a
+    contrast set — whereas is_comparative drives an EXCLUSION
+    (sent_entity_excl_comp_*), so every false positive DELETES a genuine, often
+    strongly polarised, target sentence from the feature. The two costs are not
+    symmetric, so the two gates never shared an evidence bar.
 
     Antecedent update rules. Only a sentence with at least one EXPLICIT
     company mention may update the antecedent, and then:
@@ -858,24 +771,12 @@ def resolve_anaphora(
         earliest-match-position rule, which still handles the Lucid case above
         (incidental mentions sit late, in trailing subordinate clauses).
 
-      * A NER-sourced other company may become the antecedent ONLY if its match
-        is in SUBJECT position. It still sets mentions_other either way. A
-        merely-named ORG is not what the sentence is about: "...according to
-        data tracked by Wells Fargo's Colin Langan" and "turning to Samsung
-        Electronics" name a company inside an attribution or an aside, and
-        letting either anchor last_named hands the following "The company..."
-        sentences to a firm the article is not discussing. Subject position is
-        the signal we already compute for exactly this judgement (see
-        subject-wins above), so it is reused rather than re-invented. If a
-        sentence's only explicit mentions are non-subject NER ORGs, the
-        previous antecedent simply stands. Registry companies and the target
-        are unaffected — the registry is precise enough that a mention is
-        evidence of topic, and the subject-wins precedence already sorts out
-        which of several registry mentions anchors.
-
-    Registry beats NER for the antecedent: when a sentence has both a registry
-    other-company match and an unknown ORG, the registry key is the antecedent
-    and other_source is "registry". Both set mentions_other.
+    (A NER-sourced other company used to be admitted as an antecedent only in
+    subject position, on the grounds that a merely-named ORG inside an
+    attribution — "...according to data tracked by Wells Fargo's Colin Langan"
+    — is not what the sentence is about. That rule went with the detector. The
+    registry is precise enough that a mention is evidence of topic, so registry
+    candidates anchor unconditionally and subject-wins sorts out which one.)
 
     Generic anaphora fires only when the sentence has NO explicit company
     mention, and requires either a GENERIC_ANAPHORA phrase anywhere in the
@@ -934,6 +835,18 @@ def resolve_anaphora(
     for one sentence, which is what keeps the two mechanisms independently
     measurable rather than merged into one unattributable number.
 
+    USE_ANAPHORA_FALLBACK (`use_anaphora_fallback`, default config.USE_ANAPHORA_
+    FALLBACK = False). Gates the ENTIRE heuristic block below -- both scoped
+    descriptor resolution and generic anaphora/sentence-initial "It" -- and
+    only that block; explicit matches (precedence 1) and coref (precedence 2)
+    are unaffected. A context-aware audit measured the heuristic's precision at
+    13% against coref's 74% on the same task, so with the flag at its default
+    a sentence that would only have been resolved by the heuristic simply gets
+    no tag: resolved_by_anaphora stays False and no span is recorded, exactly
+    as if the sentence named no company at all. See config.py for the full
+    evidence and the reasoning for keeping the capability behind a flag rather
+    than deleting it.
+
     EXPLETIVE "IT" IS NOT AN ANAPHOR. Both resolution mechanisms above can be
     handed a dummy subject — coref links it into a company chain, and the
     sentence-initial "It" rule matches it by position — and both are wrong the
@@ -956,7 +869,6 @@ def resolve_anaphora(
     coref_mentions = list(coref_mentions or [])
 
     target_patterns = _build_ticker_patterns(ticker)
-    other_patterns = _build_other_company_patterns(ticker)
     descriptor_re, descriptor_scopes = _build_descriptor_scopes(ticker)
 
     # PERSON entities per parsed Doc, computed once per document rather than per
@@ -998,8 +910,6 @@ def resolve_anaphora(
         resolved_by_anaphora = False
         resolved_by_coref = False
         anaphor_span: tuple[int, int] | None = None
-        other_source = ""
-        other_key = ""
 
         # --- explicit target ("names" tier only) ---
         target_pos, target_is_subject = _scan_company(
@@ -1010,70 +920,14 @@ def resolve_anaphora(
         if target_patterns["person"] and target_patterns["person"].search(text):
             mentions_ceo = True
 
-        # --- explicit others: registry first, NER only for unknown companies ---
-        registry_hits: list[tuple[str, int, bool]] = []
-        for name, pat in other_patterns.items():
-            pos, is_subj = _scan_company(pat, text, doc, offset)
-            if pos is not None:
-                registry_hits.append((name, pos, is_subj))
-
-        if registry_hits:
-            other_hits = registry_hits
-            other_source = "registry"
-        else:
-            ner_hits = _ner_other_companies(span, target_patterns["names"], other_patterns)
-            other_hits = ner_hits
-            if ner_hits:
-                other_source = "ner"
-
-        mentions_other_explicit = bool(other_hits)
-        if other_hits:
-            # The key of the other company named EARLIEST in the sentence. For a
-            # registry hit this is a COMPANIES key; for a NER hit it is the
-            # _normalize_org() surface form. Recorded because the downstream
-            # aspect-based scorer needs to know WHICH other company the row is
-            # about, and could previously only re-derive registry keys from the
-            # text — leaving every NER-sourced other row with no aspect at all.
-            other_key = min(other_hits, key=lambda h: h[1])[0]
-
         mentions_target = explicit_target
-        mentions_other = mentions_other_explicit
-        # is_comparative is REGISTRY-ONLY -- see the docstring's "Asymmetric
-        # cost" note. A NER-sourced other company sets mentions_other but never
-        # is_comparative.
-        is_comparative = explicit_target and other_source == "registry"
 
-        if explicit_target or mentions_other_explicit:
-            # Antecedent candidates are NOT the same set as the mention flags.
-            # A NER-sourced ORG may anchor the antecedent only in subject
-            # position (see the docstring); registry companies and the target
-            # anchor as they always have.
-            if other_source == "ner":
-                candidates: list[tuple[str, int, bool]] = [c for c in other_hits if c[2]]
-            else:
-                candidates = list(other_hits)
-            if explicit_target:
-                candidates.append(("TARGET", target_pos, target_is_subject))
-
-            if not candidates:
-                # Only non-subject NER ORGs in this sentence: it mentions a
-                # company without being about it, so the previous antecedent
-                # stands (and its decay clock keeps running).
-                pass
-            elif text.endswith("?"):
-                # Rhetorical/promo question -> flags stand, antecedent untouched
-                # (and no recency recorded, for descriptors either).
-                pass
-            else:
-                subjects = [c for c in candidates if c[2]]
-                if len(subjects) == 1:
-                    winner = subjects[0]
-                else:
-                    # Several subjects, or none: fall back to earliest mention.
-                    winner = min(candidates, key=lambda c: c[1])
-                last_named, last_named_idx = winner[0], idx
-                for key, _pos, _subj in candidates:
-                    last_named_by_key[key] = idx
+        if explicit_target:
+            if not text.endswith("?"):
+                # Rhetorical/promo question -> the flag stands, but the
+                # antecedent is untouched (and no recency recorded).
+                last_named, last_named_idx = "TARGET", idx
+                last_named_by_key["TARGET"] = idx
             continue_to_anaphora = False
         else:
             continue_to_anaphora = True
@@ -1088,24 +942,18 @@ def resolve_anaphora(
                 text=text,
                 person_spans=_person_spans(doc),
             )
-            if keys:
-                if "TARGET" in keys:
-                    mentions_target = True
-                if keys - {"TARGET"}:
-                    mentions_other = True
+            if "TARGET" in keys:
+                mentions_target = True
                 resolved_by_coref = True
                 anaphor_span = coref_span
                 continue_to_anaphora = False
 
-        if continue_to_anaphora:
+        if continue_to_anaphora and use_anaphora_fallback:
             descriptor_key, descriptor_span = _resolve_descriptor(
                 text, idx, descriptor_re, descriptor_scopes, last_named_by_key
             )
-            if descriptor_key is not None:
-                if descriptor_key == "TARGET":
-                    mentions_target = True
-                else:
-                    mentions_other = True
+            if descriptor_key == "TARGET":
+                mentions_target = True
                 resolved_by_anaphora = True
                 anaphor_span = descriptor_span
             elif descriptor_re is None or descriptor_re.search(text) is None:
@@ -1137,9 +985,7 @@ def resolve_anaphora(
                     if last_named is not None and gap is not None and gap <= ANAPHORA_MAX_GAP:
                         if last_named == "TARGET":
                             mentions_target = True
-                        else:
-                            mentions_other = True
-                        resolved_by_anaphora = True
+                            resolved_by_anaphora = True
                         # Prefer the generic phrase ("the company") over a bare
                         # sentence-initial "It" when both are present: it is the
                         # more informative span to substitute into later.
@@ -1155,14 +1001,10 @@ def resolve_anaphora(
                 "sent_idx": idx,
                 "text": text,
                 "mentions_target": bool(mentions_target),
-                "mentions_other": bool(mentions_other),
                 "mentions_ceo": bool(mentions_ceo),
-                "is_comparative": bool(is_comparative),
                 "target_is_subject": bool(target_is_subject),
                 "resolved_by_anaphora": bool(resolved_by_anaphora),
                 "resolved_by_coref": bool(resolved_by_coref),
-                "other_source": other_source,
-                "other_key": other_key,
                 "is_boilerplate": False,
                 "char_len": len(text),
                 "anaphor_char_start": None if anaphor_span is None else anaphor_span[0],
@@ -1285,7 +1127,12 @@ def _coref_hits_in_sentence(
 
 
 def tag_sentences(
-    article_id, sentences, ticker: str, nlp=None, coref_mentions=None
+    article_id,
+    sentences,
+    ticker: str,
+    nlp=None,
+    coref_mentions=None,
+    use_anaphora_fallback: bool = USE_ANAPHORA_FALLBACK,
 ) -> pd.DataFrame:
     """Tag one article's already-split sentences with target/other/ceo/subject/
     anaphora flags. See resolve_anaphora() for the tagging algorithm.
@@ -1317,7 +1164,12 @@ def tag_sentences(
     exactly the pre-coref behaviour.
     """
     return resolve_anaphora(
-        article_id, sentences, ticker, nlp=nlp, coref_mentions=coref_mentions
+        article_id,
+        sentences,
+        ticker,
+        nlp=nlp,
+        coref_mentions=coref_mentions,
+        use_anaphora_fallback=use_anaphora_fallback,
     )
 
 
@@ -1393,11 +1245,11 @@ def map_coref_clusters(
 
     So `person_spans` — (start_char, end_char) of every PERSON entity in the
     same spaCy doc, in the same coordinate system as the cluster spans — marks
-    mentions that are UNUSABLE FOR COMPANY KEYING. It reuses exactly the
-    machinery _ner_other_companies() already applies to ORG entities
-    mislabelled onto people. process_articles() threads the parsed doc's PERSON
-    entities through; the argument defaults to None (= no filtering) so unit
-    tests and any caller without a parse behave as before.
+    mentions that are UNUSABLE FOR COMPANY KEYING. process_articles() threads
+    the parsed doc's PERSON entities through; the argument defaults to None
+    (= no filtering) so unit tests and any caller without a parse behave as
+    before. This is one of the three PERSON consumers that keep spaCy's `ner`
+    component load-bearing after the ORG detector's removal — see _get_nlp().
 
     TITLE NOUN PHRASES NEVER KEY A CLUSTER EITHER. The PERSON-overlap rule above
     only catches mentions that literally contain a person's name. It misses the
@@ -1429,11 +1281,8 @@ def map_coref_clusters(
     ambiguous, and unresolved (no company named anywhere in the chain).
     """
     if patterns is None:
-        patterns = (
-            _build_ticker_patterns(ticker)["names"],
-            _build_other_company_patterns(ticker),
-        )
-    target_names, other_patterns = patterns
+        patterns = _build_ticker_patterns(ticker)["names"]
+    target_names = patterns[0] if isinstance(patterns, tuple) else patterns
     person_spans = list(person_spans or [])
 
     mentions: list[tuple[int, int, str]] = []
@@ -1451,18 +1300,11 @@ def map_coref_clusters(
                 continue
             if target_names is not None and target_names.search(surface):
                 keys.add("TARGET")
-            for name, pat in other_patterns.items():
-                if pat.search(surface):
-                    keys.add(name)
         if not keys:
             stats["unresolved"] += 1
             continue
-        if len(keys) > 1:
-            stats["ambiguous"] += 1
-            continue
-        key = keys.pop()
         stats["resolved"] += 1
-        mentions.extend((start, end, key) for start, end in cluster)
+        mentions.extend((start, end, "TARGET") for start, end in cluster)
     return mentions, stats
 
 
@@ -1471,6 +1313,7 @@ def process_articles(
     ticker: str,
     text_col: str = "processed_body",
     use_coref: bool = USE_COREF,
+    use_anaphora_fallback: bool = USE_ANAPHORA_FALLBACK,
 ) -> pd.DataFrame:
     """Batch entry point: sentence-split df[text_col] via nlp.pipe, tag each
     article's sentences, concatenate into one long DataFrame, and run the
@@ -1503,6 +1346,10 @@ def process_articles(
     sent to coref, and the identity is then asserted against the parsed Doc
     below rather than assumed.
 
+    `use_anaphora_fallback` (default config.USE_ANAPHORA_FALLBACK = False) is
+    threaded straight through to resolve_anaphora() -- see its docstring for
+    the measured 13%-vs-74% precision evidence behind the default.
+
     Columns: SENTENCE_COLUMNS.
     """
     logger.info(f"Splitting sentences for {len(df)} articles (ticker={ticker})")
@@ -1526,10 +1373,7 @@ def process_articles(
             )
         else:
             all_clusters = coref.resolve_documents(cleaned)
-            patterns = (
-                _build_ticker_patterns(ticker)["names"],
-                _build_other_company_patterns(ticker),
-            )
+            patterns = _build_ticker_patterns(ticker)["names"]
             totals = {"clusters": 0, "resolved": 0, "ambiguous": 0, "unresolved": 0}
             n_docs_without_usable = 0
             n_misaligned = 0
@@ -1583,7 +1427,14 @@ def process_articles(
         if not sentences:
             continue
         frames.append(
-            tag_sentences(article_id, sentences, ticker, nlp=nlp, coref_mentions=mentions)
+            tag_sentences(
+                article_id,
+                sentences,
+                ticker,
+                nlp=nlp,
+                coref_mentions=mentions,
+                use_anaphora_fallback=use_anaphora_fallback,
+            )
         )
 
     if not frames:

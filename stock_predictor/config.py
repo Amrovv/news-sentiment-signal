@@ -70,18 +70,23 @@ MARKET_INDEX = "SPY"         # abnormal-return benchmark
 #   "products"    — the company's product/model/technology names ("Model Y",
 #                   "Full Self-Driving", "Blackwell"). PURELY SUBTRACTIVE: a
 #                   product name never sets any mention flag and never becomes
-#                   an antecedent. Its only job is to suppress the generic NER
-#                   other-company detector, which routinely labels product
-#                   names ORG ("Tesla ... : Optimus humanoids, FSD, Robotaxi,
-#                   Cybercab, Megapack") and would otherwise invent an
-#                   other-company mention out of the TARGET's own catalogue.
-#                   The union of EVERY entry's products is suppressed for every
-#                   run, regardless of whose product it is — a product is never
-#                   a company under discussion, so whose it is does not matter.
-#                   These strings used to live in NER_ORG_STOPLIST, which put
-#                   one company's product catalogue in a global list and broke
-#                   the ticker-agnostic constraint: they belong to the company,
-#                   so they live on the company's entry.
+#                   an antecedent. Its job is to stop a product name being
+#                   treated as the company itself: entity_filter's
+#                   is_substitutable_anaphor() refuses to substitute the
+#                   company name over a product surface, so "...whether FSD
+#                   would stop for a school bus" is never rewritten into
+#                   "...would stop for Tesla". The union of EVERY entry's
+#                   products applies on every run, regardless of whose product
+#                   it is — a product is never the company under discussion, so
+#                   whose it is does not matter.
+#                   (This tier had a second consumer, the generic NER
+#                   other-company detector, which routinely labelled product
+#                   names ORG. That detector was removed; the tier stays for
+#                   the substitution guard above.)
+#                   These strings used to live in a global NER stoplist, which
+#                   put one company's product catalogue in a shared list and
+#                   broke the ticker-agnostic constraint: they belong to the
+#                   company, so they live on the company's entry.
 #
 # "person", "descriptors" and "products" are optional per entry; missing means
 # empty.
@@ -153,148 +158,6 @@ COMPANIES = {
     "TXN": {"names": ["Texas Instruments"], "descriptors": ["the chipmaker"]},
     "BBW": {"names": ["Build-A-Bear"]},
 }
-
-# ORG entities spaCy's NER finds that are NOT "another company under
-# discussion" in the sense entity_filter cares about. The curated COMPANIES
-# registry cannot keep up with the tail of company names that show up in a news
-# corpus (Avidity Biosciences, Samsung, ...), so entity_filter also treats any
-# ORG entity the registry does not know as an other-company mention. That
-# generic rule needs a subtractive filter, because spaCy labels exchanges,
-# newswires and government bodies ORG too, and those are the *venue* or the
-# *source* of a story rather than a rival whose sentiment would pollute the
-# target's.
-#
-# Entries are compared against entity_filter's normalized form of the entity
-# text: leading "The " removed, trailing punctuation stripped, casefolded — so
-# every entry here must already be lowercase.
-#
-# NECESSARILY INCOMPLETE. This list was tuned by eyeballing the ORG entities
-# spaCy actually produced on THIS corpus (a year of TSLA/NVDA financial news);
-# it is a precision patch on a generic detector, not an ontology. A different
-# corpus will surface different non-company ORGs and will want additions here.
-NER_ORG_STOPLIST = frozenset(
-    {
-        # Exchanges and indices — the venue a stock trades on, not a rival.
-        "nasdaq",
-        "nyse",
-        "s&p",
-        "s&p 500",
-        "dow",
-        "dow jones",
-        "russell 2000",
-        # Media and research outlets — the source of the story, not its subject.
-        # These are extremely frequent (bylines, "according to", disclosures),
-        # so leaving them in would swamp the genuine NER signal.
-        "reuters",
-        "bloomberg",
-        "cnbc",
-        "benzinga",
-        "the motley fool",
-        "motley fool",
-        "yahoo finance",
-        "marketwatch",
-        "barron's",
-        "seeking alpha",
-        "investing.com",
-        "tipranks",
-        "zacks",
-        # Institutions and regulators. Both the acronym and the full form are
-        # listed: only the acronyms used to be here, so "Tesla's FSD technology
-        # also faces scrutiny from the National Highway Traffic Safety
-        # Administration (NHTSA)" was tagged as naming another COMPANY.
-        "sec",
-        "securities and exchange commission",
-        "the fed",
-        "federal reserve",
-        "congress",
-        "eu",
-        "european union",
-        "nhtsa",
-        "national highway traffic safety administration",
-        "faa",
-        "federal aviation administration",
-        "irs",
-        "internal revenue service",
-        "doj",
-        "department of justice",
-        "department of transportation",
-        # Generic tokens spaCy mislabels as ORG.
-        "wall street",
-        "main street",
-        "ev",
-        "ai",
-        "community",
-        # Zacks-style rating/metric words. Syndicated Zacks copy writes them
-        # capitalised mid-sentence ("Tesla scores well on the Momentum metric,
-        # while offering satisfactory Growth and Quality, but poor Value"),
-        # which spaCy reads as ORG.
-        "momentum",
-        "growth",
-        "quality",
-        "value",
-        "vgm",
-        "style scores",
-        # Press-release wires — the distribution channel, not a subject.
-        "business wire",
-        "pr newswire",
-        "globe newswire",
-        "accesswire",
-    }
-    | {
-        # --- measured additions ---------------------------------------------
-        # Everything above was written from prior knowledge of the corpus.
-        # These were added after counting the ORG keys the generic detector
-        # ACTUALLY produced over all 71k tagged sentences: they are the
-        # non-company entries in the top ~60 by frequency. Kept as a separate
-        # block so the hand-written list stays legible and this one stays
-        # obviously revertible/extendable as the corpus changes.
-        #
-        # Financial acronyms and reporting jargon spaCy reads as ORG.
-        "ipo",
-        "eps",
-        "yoy",
-        "etf",
-        "llc",
-        "av",
-        "q1",
-        "q2",
-        "q3",
-        "q4",
-        "invest",
-        # (The product/technology names that used to sit here — fsd,
-        # full self-driving, autopilot, robotaxi — moved to COMPANIES["TSLA"]
-        # ["products"]. A global stoplist must not carry one company's product
-        # catalogue; see the "products" tier note above.)
-        # More outlets, data vendors and syndication furniture. The .com forms
-        # are separate keys because normalization keeps the domain.
-        "benzinga.com",
-        "benzinga news",
-        "shutterstock",
-        "shutterstock © 2026 benzinga.com",
-        "getty images",
-        "google news",
-        "forbes",
-        "stocktwits",
-        "gurufocus",
-        "wall street journal",
-        "the wall street journal",
-        "zacks investment research",
-        "zacks consensus estimate",
-        "free stock analysis report",
-        "www.sipc.org",
-        # Institutions, regulators and index/ETF proxies.
-        "fed",
-        "treasury",
-        "nasa",
-        "finra",
-        "spy",
-        "qqq",
-        "invesco qqq trust",
-        "mag 7",
-        # Frequent PERSON mislabelled as ORG in this corpus.
-        "trump",
-    }
-)
 
 # Anaphoric references that are generic to *any* company, not ticker-specific.
 # A sentence containing one of these and no explicit company name resolves to
@@ -385,6 +248,28 @@ MAX_TOKENS = 512
 SENTIMENT_BATCH_SIZE = 32
 SENTIMENT_CACHE_PATH = INTERIM_DATA_DIR / "finbert_cache.parquet"
 LEAD_SENTENCE_WINDOW = 5  # first N sentences counted as the "lead" for sent_entity_lead
+
+# Master switch for the anaphora recency-heuristic FALLBACK (scoped descriptors
+# and generic anaphora/sentence-initial "It" — see
+# entity_filter.resolve_anaphora()). Read as the default of
+# entity_filter.process_articles(use_anaphora_fallback=...).
+#
+# A context-aware audit of 100 anaphora-resolved sentences (auditor saw a
+# 6-sentence window and stated the referent independently; the passage was
+# judged determinate in 99% of rows) found the heuristic resolved the correct
+# referent on only 13 of 100 -- coreference, run on the equivalent 100-sentence
+# coref sample, scored 74%. Of the heuristic's failures, 61% resolved to a
+# DIFFERENT company actually named in the passage (typical case: "Pilot is the
+# largest network of travel centers in North America... The company serves an
+# average of 1.2 million guests per day" tagged Tesla). Disabling it costs 278
+# non-boilerplate target sentences (1.9% of the target set) -- the heuristic
+# only ever runs where coref (precedence 2) already produced nothing, so that
+# is the entire size of the gap it was filling.
+#
+# The capability is retained behind this flag rather than deleted: if coref
+# coverage ever regresses (backend unavailable, model swapped, etc.), it can be
+# re-enabled without restoring code.
+USE_ANAPHORA_FALLBACK = False
 
 # --- Aspect-based sentiment (ABSA) ---
 #

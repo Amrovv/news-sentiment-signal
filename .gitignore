@@ -209,3 +209,8 @@ data/processed/processed_articles.parquet
 data/processed/processed_articles_2nd.parquet
 data/processed/processed_articles_origin.parquet
 data/processed/processed_articles_best.parquet
+
+# Secrets -- never commit. config.py reads FINNHUB_API_KEY from here via python-dotenv.
+.env
+.env.*
+!.env.example

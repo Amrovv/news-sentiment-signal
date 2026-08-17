@@ -50,73 +50,7 @@ def test_basic_target_mention():
     assert len(df) == 1
     row = df.iloc[0]
     assert row["mentions_target"] == True
-    assert row["mentions_other"] == False
     assert row["resolved_by_anaphora"] == False
-
-
-def test_other_company_excluded_from_target():
-    # Sentence 1 is about the target (TSLA), sentence 2 is about BYD only.
-    # Key behavior under test: a sentence naming ONLY another company must NOT
-    # be counted as a TSLA target mention, but must be flagged as "other".
-    # (Sentences naming BOTH now set both flags -- see
-    # test_both_mention_sets_both_flags_and_comparative.)
-    sentences = [
-        "Tesla delivered record numbers this quarter.",
-        "BYD announced a new plant in Hungary this week.",
-    ]
-    df = tag_sentences(2, sentences, TICKER)
-
-    tesla_row = df.iloc[0]
-    byd_row = df.iloc[1]
-
-    assert tesla_row["mentions_target"] == True
-    assert tesla_row["mentions_other"] == False
-    assert tesla_row["is_comparative"] == False
-
-    assert byd_row["mentions_target"] == False
-    assert byd_row["mentions_other"] == True
-    assert byd_row["is_comparative"] == False
-
-
-def test_both_mention_sets_both_flags_and_comparative():
-    # Independent flags: a sentence naming the target AND another company gets
-    # both mentions_* flags plus is_comparative (sentiment attribution is
-    # ambiguous -- FinBERT scores the sentence as a whole).
-    df = tag_sentences(
-        20, ["Micron is up 18%, meaning it has overtaken Tesla in market cap."], TICKER
-    )
-    row = df.iloc[0]
-    assert row["mentions_target"] == True
-    assert row["mentions_other"] == True
-    assert row["is_comparative"] == True
-
-
-def test_multi_company_antecedent_first_mention_wins():
-    # Lucid regression (article 139579101, notebook 2.0 section 1.4): an
-    # incidental possessive Tesla mention in a trailing subordinate clause
-    # used to hijack the antecedent and mistag the following Lucid sentences.
-    # Now handled by subject-position-wins ("Lucid's market debut" is the
-    # subject subtree, "Tesla's former engineer" is an appositive), which also
-    # reproduces what first-mention-wins got right here.
-    #
-    # Sentence 3 also depends on "Air" not being read as an other company: it
-    # used to be a hard-coded NER_ORG_STOPLIST entry, and is now LCID's own
-    # product ("products" tier), which is where a product name belongs.
-    sentences = [
-        "Lucid Motors went public this week.",
-        "Lucid's market debut was led by Peter Rawlinson, Tesla's former chief vehicle engineer.",
-        "The company then delivered its first Air sedans.",
-    ]
-    df = resolve_anaphora(21, sentences, TICKER)
-
-    assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["mentions_other"] == True
-    assert df.iloc[1]["is_comparative"] == True
-
-    # Antecedent stayed on Lucid (first mentioned), so sentence 3 is "other".
-    assert df.iloc[2]["mentions_other"] == True
-    assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == True
 
 
 def test_subject_beats_first_mention():
@@ -129,11 +63,12 @@ def test_subject_beats_first_mention():
         "According to Ford, Tesla is expanding its Berlin plant.",
         "The company said the expansion would finish next year.",
     ]
-    df = resolve_anaphora(30, sentences, TICKER)
+    df = resolve_anaphora(30, sentences, TICKER, use_anaphora_fallback=True)
 
-    assert df.iloc[0]["is_comparative"] == True
+    # Ford is no longer detectable (other-company detection removed), so the
+    # only antecedent candidate is the target -- which is what the following
+    # "The company..." sentence must inherit.
     assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["mentions_other"] == False
     assert df.iloc[1]["resolved_by_anaphora"] == True
 
 
@@ -151,154 +86,6 @@ def test_target_is_subject_flag():
     assert non_subj.iloc[0]["target_is_subject"] == False
 
 
-def test_ner_detects_unregistered_company():
-    # Samsung is not in COMPANIES and never will be -- the registry cannot
-    # cover the tail. spaCy's ORG entities do.
-    df = tag_sentences(32, ["Samsung reported record chip revenue."], TICKER)
-    row = df.iloc[0]
-    assert row["mentions_other"] == True
-    assert row["mentions_target"] == False
-    assert row["other_source"] == "ner"
-
-
-def test_ner_other_does_not_set_comparative():
-    # is_comparative is REGISTRY-ONLY. It drives an EXCLUSION
-    # (sent_entity_excl_comp_*), so a false positive DELETES a genuine target
-    # sentence from the feature -- an asymmetric cost that measured NER
-    # precision (~50-65%) does not cover. NER still contributes mentions_other.
-    df = tag_sentences(
-        40, ["Tesla shares rose while Avidity Biosciences slumped after the readout."], TICKER
-    )
-    row = df.iloc[0]
-    assert row["mentions_target"] == True
-    assert row["mentions_other"] == True
-    assert row["other_source"] == "ner"
-    assert row["is_comparative"] == False
-
-
-def test_registry_other_still_sets_comparative():
-    # The registry is curated and effectively 100% precise on "is this a
-    # company", so it alone is allowed to gate the exclusion.
-    df = tag_sentences(41, ["Ford outsold Tesla in trucks last quarter."], TICKER)
-    row = df.iloc[0]
-    assert row["mentions_target"] == True
-    assert row["mentions_other"] == True
-    assert row["other_source"] == "registry"
-    assert row["is_comparative"] == True
-
-
-def test_ner_non_subject_does_not_anchor_antecedent():
-    # An attribution source names a company without the sentence being ABOUT
-    # it. "Wells Fargo" sits in a prepositional phrase, so it must not steal
-    # the antecedent from Tesla -- otherwise sentence 3 is scored as a Wells
-    # Fargo sentence.
-    sentences = [
-        "Tesla posted record deliveries.",
-        "Sales fell according to data tracked by Wells Fargo.",
-        "The company also raised guidance.",
-    ]
-    df = resolve_anaphora(42, sentences, TICKER)
-
-    # The mention itself still fires -- only the anchoring is withheld.
-    assert df.iloc[1]["mentions_other"] == True
-    assert df.iloc[1]["other_source"] == "ner"
-
-    assert df.iloc[2]["mentions_target"] == True
-    assert df.iloc[2]["mentions_other"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == True
-
-
-def test_ner_subject_anchors_antecedent():
-    # The same NER source in SUBJECT position is genuinely what its sentence is
-    # about, so it does anchor -- NER precision is adequate for coverage and
-    # antecedents, just not for gating an exclusion.
-    sentences = [
-        "Tesla posted record deliveries.",
-        "Samsung reported record chip revenue.",
-        "The company also raised its dividend.",
-    ]
-    df = resolve_anaphora(43, sentences, TICKER)
-
-    assert df.iloc[1]["mentions_other"] == True
-    assert df.iloc[1]["other_source"] == "ner"
-
-    assert df.iloc[2]["mentions_other"] == True
-    assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == True
-
-
-def test_product_names_are_not_other_companies():
-    # spaCy labels product names ORG ("Full Self-Driving"), which used to
-    # manufacture an other-company mention out of the TARGET'S OWN catalogue.
-    # The products now live on the COMPANIES entry, not in a global stoplist.
-    df = tag_sentences(44, ["Tesla expanded Full Self-Driving and Megapack production."], TICKER)
-    row = df.iloc[0]
-    assert row["mentions_target"] == True
-    assert row["mentions_other"] == False
-    assert row["is_comparative"] == False
-
-
-def test_person_tagged_as_org_is_not_other_company():
-    # spaCy tags the bare surname of an already-introduced PERSON as ORG
-    # ("Cathie Wood ... Wood said ..."). Document-scoped PERSON evidence is
-    # what catches it, so the two sentences must share a doc -- i.e. go through
-    # the Span path the corpus pipeline uses.
-    text = "Cathie Wood is bullish on the sector. Wood said the pullback was a gift to buyers."
-    spans = split_sentences([text], return_spans=True)[0]
-    assert len(spans) == 2
-    df = tag_sentences(45, spans, TICKER)
-
-    assert df.iloc[1]["mentions_other"] == False
-    assert df.iloc[1]["other_source"] == ""
-
-
-def test_ner_stoplist_excludes_non_companies():
-    # Nasdaq is an ORG entity but it is the venue, not a rival.
-    df = tag_sentences(33, ["Nasdaq climbed 2% on the session."], TICKER)
-    row = df.iloc[0]
-    assert row["mentions_other"] == False
-    assert row["other_source"] == ""
-
-
-def test_registry_takes_priority_over_ner():
-    # A curated company must be attributed through the registry (canonical
-    # antecedent key), not through its NER surface form.
-    df = tag_sentences(34, ["Ford reported strong truck sales."], TICKER)
-    row = df.iloc[0]
-    assert row["mentions_other"] == True
-    assert row["other_source"] == "registry"
-
-
-def test_descriptor_resolves_to_recent_qualifying_company():
-    # "the automaker" is listed on Ford's registry entry, so it resolves to
-    # Ford -- not to the target, which is what the old explicit-match tier did.
-    sentences = [
-        "Ford reported strong truck sales.",
-        "The automaker also raised its dividend.",
-    ]
-    df = resolve_anaphora(35, sentences, TICKER)
-
-    assert df.iloc[1]["mentions_other"] == True
-    assert df.iloc[1]["mentions_target"] == False
-    assert df.iloc[1]["resolved_by_anaphora"] == True
-
-
-def test_descriptor_does_not_default_to_target():
-    # SPEC ITEM 3 BEHAVIOUR CHANGE (this is the case the old code got wrong):
-    # a bare descriptor no longer counts as an explicit target match. Nvidia
-    # does not bear "the automaker", so no qualifying company has been named
-    # and the sentence resolves to NEITHER rather than defaulting to Tesla.
-    sentences = [
-        "Nvidia beat estimates.",
-        "The automaker cut prices.",
-    ]
-    df = resolve_anaphora(36, sentences, TICKER)
-
-    assert df.iloc[1]["mentions_target"] == False
-    assert df.iloc[1]["mentions_other"] == False
-    assert df.iloc[1]["resolved_by_anaphora"] == False
-
-
 def test_descriptor_decays_with_gap():
     # Descriptor resolution obeys the same ANAPHORA_MAX_GAP decay as generic
     # anaphora: a qualifying company named too far back is not carried forward.
@@ -309,11 +96,10 @@ def test_descriptor_decays_with_gap():
         for i in range(ANAPHORA_MAX_GAP)
     ]
     sentences = ["Ford reported strong truck sales.", *filler, "The automaker cut prices."]
-    df = resolve_anaphora(37, sentences, TICKER)
+    df = resolve_anaphora(37, sentences, TICKER, use_anaphora_fallback=True)
 
     last = df.iloc[-1]
     assert last["mentions_target"] == False
-    assert last["mentions_other"] == False
     assert last["resolved_by_anaphora"] == False
 
 
@@ -324,16 +110,17 @@ def test_question_sentences_do_not_update_antecedent():
         "Missed Nvidia and Tesla?",
         "The company also raised its dividend.",
     ]
-    df = resolve_anaphora(22, sentences, TICKER)
+    df = resolve_anaphora(22, sentences, TICKER, use_anaphora_fallback=True)
 
-    # The question's own flags still fire.
+    # The question's own flag still fires.
     assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["mentions_other"] == True
 
-    # But the antecedent is still Ford, not Tesla.
-    assert df.iloc[2]["mentions_other"] == True
+    # But it must not become the antecedent: the following "The company..."
+    # sentence has nothing to inherit and stays untagged. (Before other-company
+    # detection was removed this asserted the antecedent was still Ford; the
+    # rule under test -- a question never anchors -- is the same either way.)
     assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == True
+    assert df.iloc[2]["resolved_by_anaphora"] == False
 
 
 def test_sentence_initial_it_resolves_but_midsentence_it_does_not():
@@ -345,47 +132,13 @@ def test_sentence_initial_it_resolves_but_midsentence_it_does_not():
         "It also raised guidance for the year.",
         "Analysts said it was hard to believe the results.",
     ]
-    df = resolve_anaphora(23, sentences, TICKER)
+    df = resolve_anaphora(23, sentences, TICKER, use_anaphora_fallback=True)
 
     assert df.iloc[1]["mentions_target"] == True
     assert df.iloc[1]["resolved_by_anaphora"] == True
 
     assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["mentions_other"] == False
     assert df.iloc[2]["resolved_by_anaphora"] == False
-
-
-def test_other_company_patterns_exclude_target_ticker():
-    # COMPANIES is symmetric, so the target's own entry is also a candidate
-    # "other company". With independent flags, running ticker="NVDA" must not
-    # make Nvidia its own "other company".
-    df = tag_sentences(24, ["Nvidia beat estimates."], "NVDA")
-    row = df.iloc[0]
-    assert row["mentions_target"] == True
-    assert row["mentions_other"] == False
-    assert row["is_comparative"] == False
-
-
-def test_target_becomes_other_company_symmetrically():
-    # The capability the symmetric registry adds: any company can be target or
-    # other, chosen at runtime by ticker. Under the old target-relative split
-    # Tesla was absent from OTHER_COMPANIES, so a Tesla sentence in an NVDA run
-    # got no mentions_other tag at all.
-    sentences = [
-        "Nvidia reported record data center revenue.",
-        "Tesla shares fell after the report.",
-    ]
-
-    nvda = tag_sentences(25, sentences, "NVDA")
-    assert nvda.iloc[0]["mentions_target"] == True
-    assert nvda.iloc[1]["mentions_other"] == True
-    assert nvda.iloc[1]["mentions_target"] == False
-
-    tsla = tag_sentences(25, sentences, "TSLA")
-    assert tsla.iloc[0]["mentions_other"] == True
-    assert tsla.iloc[0]["mentions_target"] == False
-    assert tsla.iloc[1]["mentions_target"] == True
-    assert tsla.iloc[1]["mentions_other"] == False
 
 
 def test_derived_compat_views_match_registry():
@@ -440,35 +193,6 @@ def test_ticker_substring_traps(sentence):
     assert tsla_df.iloc[0]["mentions_target"] == False
 
 
-def test_anaphora_chain_tracks_most_recent_company():
-    sentences = [
-        "Tesla delivered record numbers.",
-        "The company also raised prices.",
-        "BYD announced a new plant.",
-        "The firm said demand was strong.",
-    ]
-    df = resolve_anaphora(4, sentences, TICKER)
-
-    # Sentence 1: explicit Tesla mention.
-    assert df.iloc[0]["mentions_target"] == True
-    assert df.iloc[0]["resolved_by_anaphora"] == False
-
-    # Sentence 2: "The company" resolves to Tesla (last-named = target).
-    assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["mentions_other"] == False
-    assert df.iloc[1]["resolved_by_anaphora"] == True
-
-    # Sentence 3: explicit BYD mention -> other, not target.
-    assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["mentions_other"] == True
-    assert df.iloc[2]["resolved_by_anaphora"] == False
-
-    # Sentence 4: "The firm" resolves to BYD (last-named), NOT Tesla.
-    assert df.iloc[3]["mentions_target"] == False
-    assert df.iloc[3]["mentions_other"] == True
-    assert df.iloc[3]["resolved_by_anaphora"] == True
-
-
 def test_anaphora_decays_after_max_gap():
     # Long-article regression: an explicit mention many sentences back should
     # stop being attributed to generic anaphora once ANAPHORA_MAX_GAP is
@@ -479,7 +203,7 @@ def test_anaphora_decays_after_max_gap():
 
     filler = [f"This is unrelated filler sentence number {i} about the weather." for i in range(ANAPHORA_MAX_GAP - 1)]
     sentences = ["Tesla delivered record numbers this quarter.", *filler, "The company said demand was strong."]
-    df = resolve_anaphora(6, sentences, TICKER)
+    df = resolve_anaphora(6, sentences, TICKER, use_anaphora_fallback=True)
 
     # Sentence just inside the gap (gap == ANAPHORA_MAX_GAP) still resolves.
     assert df.iloc[-1]["mentions_target"] == True
@@ -487,11 +211,65 @@ def test_anaphora_decays_after_max_gap():
 
     # One sentence further out, the antecedent has decayed.
     sentences_too_far = sentences + ["The firm reported strong results."]
-    df2 = resolve_anaphora(6, sentences_too_far, TICKER)
+    df2 = resolve_anaphora(6, sentences_too_far, TICKER, use_anaphora_fallback=True)
     last = df2.iloc[-1]
     assert last["mentions_target"] == False
-    assert last["mentions_other"] == False
     assert last["resolved_by_anaphora"] == False
+
+
+# ---------------------------------------------------------------------------
+# USE_ANAPHORA_FALLBACK: the recency heuristic defaults OFF.
+#
+# A context-aware audit of 100 anaphora-resolved sentences (auditor saw a
+# 6-sentence window, judged determinate in 99% of rows) found the heuristic
+# correct on only 13 of 100 -- coreference scored 74% on the equivalent
+# sample -- so the default leaves those sentences untagged rather than
+# guessing. The capability stays behind the flag rather than being deleted.
+# ---------------------------------------------------------------------------
+
+
+def test_anaphora_fallback_default_leaves_13pct_precision_heuristic_off():
+    sentences = [
+        "Tesla delivered record numbers this quarter.",
+        "The company also raised prices.",
+    ]
+    # Default: config.USE_ANAPHORA_FALLBACK (False) -- no keyword passed.
+    df = resolve_anaphora(70, sentences, TICKER)
+
+    row = df.iloc[1]
+    assert row["mentions_target"] == False
+    assert row["resolved_by_anaphora"] == False
+    assert pd.isna(row["anaphor_char_start"])
+    assert pd.isna(row["anaphor_char_end"])
+
+    # With the flag explicitly re-enabled, the old behaviour returns.
+    df_on = resolve_anaphora(70, sentences, TICKER, use_anaphora_fallback=True)
+    row_on = df_on.iloc[1]
+    assert row_on["mentions_target"] == True
+    assert row_on["resolved_by_anaphora"] == True
+
+
+def test_anaphora_fallback_off_does_not_regress_explicit_or_coref_paths():
+    # Precedence 1 (explicit) and precedence 2 (coref) must tag normally with
+    # the fallback OFF -- this is the thing that must not regress when the
+    # heuristic (precedence 3) is disabled by default.
+    text = "Tesla delivered record numbers. The company also raised prices."
+    spans = split_sentences([text], return_spans=True)[0]
+    assert len(spans) == 2
+
+    # Explicit mention: unaffected by the flag either way.
+    explicit_off = tag_sentences(71, spans, TICKER, use_anaphora_fallback=False)
+    assert explicit_off.iloc[0]["mentions_target"] == True
+    assert explicit_off.iloc[0]["resolved_by_anaphora"] == False
+
+    # Coref-resolved sentence: still tags normally with the heuristic OFF,
+    # since coref never falls through to the gated block at all.
+    coref_start = text.index("The company")
+    mentions = [(0, 5, "TARGET"), (coref_start, coref_start + len("The company"), "TARGET")]
+    coref_off = tag_sentences(72, spans, TICKER, coref_mentions=mentions, use_anaphora_fallback=False)
+    assert coref_off.iloc[1]["mentions_target"] == True
+    assert coref_off.iloc[1]["resolved_by_coref"] == True
+    assert coref_off.iloc[1]["resolved_by_anaphora"] == False
 
 
 def test_mentions_ceo_independent_of_mentions_target():
@@ -560,31 +338,18 @@ def test_split_sentences_fixes_missing_space_after_period(nlp):
 def test_coref_unavailable_falls_back_to_heuristic(monkeypatch):
     # Graceful degradation: with the backend reporting itself unavailable,
     # process_articles must still run to completion and produce exactly the
-    # heuristic's tags (no exception, no coref-resolved rows).
+    # heuristic's tags (no exception, no coref-resolved rows). The heuristic
+    # itself defaults OFF (config.USE_ANAPHORA_FALLBACK), so this test -- which
+    # is specifically about the fallback mechanism -- must opt back into it
+    # explicitly to observe resolved_by_anaphora firing at all.
     monkeypatch.setattr(coref, "is_available", lambda: False)
 
-    out = process_articles(COREF_CORPUS, TICKER, use_coref=True)
-    baseline = process_articles(COREF_CORPUS, TICKER, use_coref=False)
+    out = process_articles(COREF_CORPUS, TICKER, use_coref=True, use_anaphora_fallback=True)
+    baseline = process_articles(COREF_CORPUS, TICKER, use_coref=False, use_anaphora_fallback=True)
 
     assert not out["resolved_by_coref"].any()
     assert out["resolved_by_anaphora"].any()
     pd.testing.assert_frame_equal(out, baseline)
-
-
-def test_map_coref_clusters_discards_ambiguous():
-    # A cluster naming two different companies is a coin flip, so it is dropped
-    # and counted rather than guessed at.
-    text = "Tesla and Ford said they would each expand output."
-    clean = [[(0, 5), (30, 34)]]  # "Tesla" ... (a Tesla-only chain)
-    mixed = [[(0, 5), (10, 14)]]  # "Tesla" + "Ford" in one chain
-
-    mentions, stats = map_coref_clusters(clean, text, TICKER)
-    assert stats["resolved"] == 1 and stats["ambiguous"] == 0
-    assert all(m[2] == "TARGET" for m in mentions)
-
-    mentions, stats = map_coref_clusters(mixed, text, TICKER)
-    assert mentions == []
-    assert stats["ambiguous"] == 1
 
 
 def test_coref_mentions_only_fill_unnamed_sentences():
@@ -612,8 +377,9 @@ def test_coref_mentions_only_fill_unnamed_sentences():
 def test_anaphor_spans_are_within_sentence():
     # Both mechanisms record the resolved mention's span relative to the row's
     # own text. Heuristic path here (no model needed); the coref path is covered
-    # by the slow test below.
-    out = process_articles(COREF_CORPUS, TICKER, use_coref=False)
+    # by the slow test below. The heuristic is opted into explicitly since it
+    # defaults off (config.USE_ANAPHORA_FALLBACK).
+    out = process_articles(COREF_CORPUS, TICKER, use_coref=False, use_anaphora_fallback=True)
     resolved = out[out["anaphor_char_start"].notna()]
     assert len(resolved) > 0
 
@@ -635,7 +401,7 @@ def test_span_columns_are_nullable_int():
 
 
 def test_needs_score_unaffected_by_new_columns():
-    # sentiment.needs_score() reads only mentions_target/other/ceo and
+    # sentiment.needs_score() reads only mentions_target/ceo and
     # is_boilerplate; adding coref columns must not disturb it.
     from stock_predictor.text.sentiment import needs_score
 
@@ -643,7 +409,7 @@ def test_needs_score_unaffected_by_new_columns():
     mask = needs_score(out)
     assert len(mask) == len(out)
     expected = (
-        out["mentions_target"] | out["mentions_other"] | out["mentions_ceo"]
+        out["mentions_target"] | out["mentions_ceo"]
     ) & ~out["is_boilerplate"]
     assert (mask == expected).all()
 
@@ -902,7 +668,10 @@ def test_expletive_it_is_not_resolved_by_the_sentence_initial_rule():
         "under $50,000."
     )
     spans = split_sentences([text], return_spans=True)[0]
-    df = tag_sentences(60, spans, TICKER)
+    # use_anaphora_fallback=True: this test is specifically about the
+    # sentence-initial "It" rule inside the heuristic, which defaults off
+    # (config.USE_ANAPHORA_FALLBACK) and must be opted into to observe it.
+    df = tag_sentences(60, spans, TICKER, use_anaphora_fallback=True)
 
     assert df.iloc[0]["mentions_target"] == True
     row = df.iloc[1]
@@ -916,7 +685,9 @@ def test_expletive_it_is_not_resolved_by_the_sentence_initial_rule():
         "Tesla delivered record numbers this quarter. "
         "It expects deliveries to keep climbing next year."
     )
-    ok_df = tag_sentences(61, split_sentences([ok], return_spans=True)[0], TICKER)
+    ok_df = tag_sentences(
+        61, split_sentences([ok], return_spans=True)[0], TICKER, use_anaphora_fallback=True
+    )
     assert ok_df.iloc[1]["mentions_target"] == True
     assert ok_df.iloc[1]["resolved_by_anaphora"] == True
 
@@ -989,23 +760,6 @@ def test_person_denoting_title_np_does_not_key_a_cluster():
     assert stats["unresolved"] == 1
 
 
-def test_other_key_records_which_company_was_named():
-    df = tag_sentences(
-        63,
-        [
-            "Ford reported strong truck sales in the quarter.",
-            "Avidity Biosciences announced a new trial this week.",
-            "The weather in Austin was unremarkable all week.",
-        ],
-        TICKER,
-    )
-    assert df.iloc[0]["other_source"] == "registry"
-    assert df.iloc[0]["other_key"] == "F"
-    assert df.iloc[1]["other_source"] == "ner"
-    assert df.iloc[1]["other_key"] == "avidity biosciences"
-    assert df.iloc[2]["other_key"] == ""
-
-
 # ---------------------------------------------------------------------------
 # is_substitutable_anaphor: the span selected for ABSA injection must be a
 # recognisable company anaphor, never an arbitrary piece of a coref chain.
@@ -1015,7 +769,7 @@ def test_other_key_records_which_company_was_named():
 @pytest.mark.parametrize(
     "surface",
     [
-        "it", "its", "they", "we", "our",
+        "it", "its", "they", "their", "them", "theirs",
         "the company", "the company's", "the company’s",  # curly apostrophe
         "company", "the stock", "the EV maker", "this company",
         "the electric vehicle (ev) maker", "The Company", "the automaker's",
@@ -1030,6 +784,13 @@ def test_is_substitutable_anaphor_allows_real_company_anaphors(surface):
     [
         # PERSON pronouns -- simply absent from the closed class, deliberately.
         "he", "she", "I", "you", "his company",
+        # First-person plural: removed from _ANAPHORIC_PRONOUNS. In news prose
+        # a "we"/"our" is almost always inside a quote from a PERSON, not the
+        # company speaking in its own voice -- a context-aware audit found 10
+        # corpus substitutions produced subject-verb disagreement this way
+        # ("'We want the future to look like the future,' Musk said" became
+        # "Tesla want the future to look like the future").
+        "we", "our", "us", "ours", "we're", "we’re",
         # A proper noun a coref error dragged into the chain.
         "Brazil", "Spotify",
         # A product, not the company itself (see the separate PRODUCT_KEYS
@@ -1056,6 +817,17 @@ def test_is_substitutable_anaphor_rejects_non_company_surfaces(surface):
 
 def test_is_substitutable_anaphor_rejects_none():
     assert _entity_filter.is_substitutable_anaphor(None) is False
+
+
+def test_is_substitutable_anaphor_rejects_first_person_plural():
+    # First-person plural is no longer treated as company anaphora -- see
+    # _ANAPHORIC_PRONOUNS. In news prose "we"/"our" is almost always inside a
+    # quote from a PERSON, not the company speaking in its own voice.
+    assert _entity_filter.is_substitutable_anaphor("we") is False
+    assert _entity_filter.is_substitutable_anaphor("our") is False
+    assert _entity_filter.is_substitutable_anaphor("us") is False
+    assert _entity_filter.is_substitutable_anaphor("ours") is False
+    assert _entity_filter.is_substitutable_anaphor("we're") is False
 
 
 def test_is_substitutable_anaphor_rejects_registry_product_names():

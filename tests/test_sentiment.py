@@ -299,7 +299,8 @@ def _sent_row(
     sent_idx,
     text,
     mentions_target,
-    mentions_other,
+    _unused_other,   # other-company detection removed; slot kept so the many
+                     # positional call sites below need no churn
     pos,
     neg,
     neu,
@@ -312,9 +313,7 @@ def _sent_row(
         "sent_idx": sent_idx,
         "text": text,
         "mentions_target": mentions_target,
-        "mentions_other": mentions_other,
         "mentions_ceo": mentions_ceo,
-        "is_comparative": is_comparative,
         "resolved_by_anaphora": False,
         "is_boilerplate": is_boilerplate,
         "char_len": len(text),
@@ -337,12 +336,10 @@ def test_aggregate_article_features_basic_means_and_counts():
     row = result.iloc[0]
     assert row["article_id"] == 1
     assert row["n_entity_sents"] == 2
-    assert row["n_other_sents"] == 1
     assert row["n_total_sents"] == 3
     assert row["entity_share"] == pytest.approx(2 / 3)
     assert row["sent_entity_pos"] == pytest.approx((0.8 + 0.2) / 2)
     assert row["sent_entity_neg"] == pytest.approx((0.1 + 0.7) / 2)
-    assert row["sent_other_mean_pos"] == pytest.approx(0.5)
     assert row["article_length"] == sum(r["char_len"] for r in rows)
 
 
@@ -452,53 +449,6 @@ def test_aggregate_article_features_no_headline_scores_is_nan():
     assert pd.isna(row["sent_headline_neu"])
 
 
-def test_aggregate_excl_comp_mean_excludes_comparative_rows():
-    rows = [
-        _sent_row(10, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1),
-        _sent_row(
-            10,
-            1,
-            "Micron has overtaken Tesla in market cap.",
-            True,
-            True,
-            0.2,
-            0.7,
-            0.1,
-            is_comparative=True,
-        ),
-    ]
-    result = aggregate_article_features(pd.DataFrame(rows))
-    row = result.iloc[0]
-
-    # Plain mean includes both, excl_comp mean only the non-comparative one.
-    assert row["sent_entity_pos"] == pytest.approx((0.8 + 0.2) / 2)
-    assert row["sent_entity_excl_comp_pos"] == pytest.approx(0.8)
-    assert row["sent_entity_excl_comp_neg"] == pytest.approx(0.1)
-    assert row["n_comparative_sents"] == 1
-
-
-def test_aggregate_excl_comp_is_nan_when_all_target_sents_comparative():
-    rows = [
-        _sent_row(
-            11,
-            0,
-            "Micron has overtaken Tesla in market cap.",
-            True,
-            True,
-            0.2,
-            0.7,
-            0.1,
-            is_comparative=True,
-        ),
-    ]
-    result = aggregate_article_features(pd.DataFrame(rows))
-    row = result.iloc[0]
-    assert pd.isna(row["sent_entity_excl_comp_pos"])
-    assert pd.isna(row["sent_entity_excl_comp_neg"])
-    assert pd.isna(row["sent_entity_excl_comp_neu"])
-    assert row["n_comparative_sents"] == 1
-
-
 def test_aggregate_boilerplate_excluded_from_means_and_totals():
     rows = [
         _sent_row(12, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1),
@@ -527,16 +477,15 @@ def test_aggregate_boilerplate_excluded_from_means_and_totals():
     assert row["article_length"] == sum(r["char_len"] for r in rows)
 
 
-def test_aggregate_missing_boilerplate_and_comparative_columns_default_false():
+def test_aggregate_missing_boilerplate_column_defaults_false():
     rows = [
         _sent_row(13, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1),
     ]
-    df = pd.DataFrame(rows).drop(columns=["is_boilerplate", "is_comparative"])
+    df = pd.DataFrame(rows).drop(columns=["is_boilerplate"])
     result = aggregate_article_features(df)  # must not raise KeyError
     row = result.iloc[0]
     assert row["n_boilerplate_sents"] == 0
-    assert row["n_comparative_sents"] == 0
-    assert row["sent_entity_excl_comp_pos"] == pytest.approx(0.8)
+    assert row["sent_entity_pos"] == pytest.approx(0.8)
 
 
 def test_aggregate_ceo_only_sentences():
@@ -588,9 +537,9 @@ def test_aggregate_article_features_multiple_articles_independent():
 
 
 def _sent_row_with_absa(
-    article_id, sent_idx, text, mentions_target, mentions_other, pos, neg, neu, absa_pos, absa_neg, absa_neu
+    article_id, sent_idx, text, mentions_target, _unused_other, pos, neg, neu, absa_pos, absa_neg, absa_neu
 ):
-    row = _sent_row(article_id, sent_idx, text, mentions_target, mentions_other, pos, neg, neu)
+    row = _sent_row(article_id, sent_idx, text, mentions_target, _unused_other, pos, neg, neu)
     row["absa_pos"] = absa_pos
     row["absa_neg"] = absa_neg
     row["absa_neu"] = absa_neu
@@ -660,7 +609,6 @@ def test_analyze_end_to_end(tmp_path):
 
     assert isinstance(result, dict)
     assert result["n_entity_sents"] >= 1
-    assert result["n_other_sents"] >= 1
     assert result["n_total_sents"] >= 2
     assert 0 <= result["entity_share"] <= 1
     assert not pd.isna(result["sent_entity_pos"])
@@ -670,13 +618,9 @@ def test_analyze_end_to_end(tmp_path):
 
     # New schema flows through the single-article path too.
     for key in (
-        "sent_entity_excl_comp_pos",
-        "sent_entity_excl_comp_neg",
-        "sent_entity_excl_comp_neu",
         "sent_ceo_pos",
         "sent_ceo_neg",
         "sent_ceo_neu",
-        "n_comparative_sents",
         "n_boilerplate_sents",
         "n_ceo_sents",
     ):
@@ -707,6 +651,8 @@ def test_analyze_no_target_sentences_gives_nan_entity_scores(tmp_path):
 def test_needs_score_buckets():
     rows = [
         _sent_row(1, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1),
+        # An other-company sentence. Was in-bucket while sent_other_mean_*
+        # existed; nothing reads it now, so needs_score() must reject it.
         _sent_row(1, 1, "BYD reported results.", False, True, 0.5, 0.3, 0.2),
         _sent_row(1, 2, "Musk unveiled a rocket.", False, False, 0.2, 0.6, 0.2, mentions_ceo=True),
         _sent_row(1, 3, "Markets were quiet on Monday.", False, False, 0.3, 0.3, 0.4),
@@ -725,7 +671,7 @@ def test_needs_score_buckets():
     mask = needs_score(pd.DataFrame(rows))
 
     assert mask.dtype == bool
-    assert mask.tolist() == [True, True, True, False, False]
+    assert mask.tolist() == [True, False, True, False, False]
 
 
 def test_needs_score_missing_boilerplate_column_defaults_false():
@@ -748,7 +694,7 @@ def test_needs_score_missing_mentions_column_raises():
 
 def test_needs_score_empty_frame_returns_empty_bool_series():
     df = pd.DataFrame(
-        columns=["mentions_target", "mentions_other", "mentions_ceo", "is_boilerplate"]
+        columns=["mentions_target", "mentions_ceo", "is_boilerplate"]
     )
     mask = needs_score(df)
     assert len(mask) == 0
@@ -928,15 +874,9 @@ def test_analyze_unchanged_keys(tmp_path):
         "sent_entity_pos",
         "sent_entity_neg",
         "sent_entity_neu",
-        "sent_entity_excl_comp_pos",
-        "sent_entity_excl_comp_neg",
-        "sent_entity_excl_comp_neu",
         "sent_entity_maxmag_pos",
         "sent_entity_maxmag_neg",
         "sent_entity_maxmag_neu",
-        "sent_other_mean_pos",
-        "sent_other_mean_neg",
-        "sent_other_mean_neu",
         "sent_entity_lead_pos",
         "sent_entity_lead_neg",
         "sent_entity_lead_neu",
@@ -944,8 +884,6 @@ def test_analyze_unchanged_keys(tmp_path):
         "sent_ceo_neg",
         "sent_ceo_neu",
         "n_entity_sents",
-        "n_other_sents",
-        "n_comparative_sents",
         "n_boilerplate_sents",
         "n_ceo_sents",
         "n_total_sents",
