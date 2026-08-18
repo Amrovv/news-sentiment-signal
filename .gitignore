@@ -214,3 +214,7 @@ data/processed/processed_articles_best.parquet
 .env
 .env.*
 !.env.example
+
+# Local model weights -- multi-GB GGUF/checkpoint files, fetched not authored.
+# JUDGE_MODEL_PATH points here; notebook 2.7 records how to re-fetch.
+models/

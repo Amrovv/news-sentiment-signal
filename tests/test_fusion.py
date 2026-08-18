@@ -7,8 +7,11 @@ from stock_predictor.text.fusion import (
     AGGREGATED_VARIANTS,
     DEADBAND,
     FUSION_AGGREGATIONS,
+    PROVENANCE_CHANNELS,
     VARIANTS,
     aggregate_fusion_features,
+    aggregate_provenance_features,
+    provenance_channel,
     score_variants,
     signed,
 )
@@ -643,3 +646,194 @@ def test_empty_input_frame_returns_empty_frame_with_correct_columns():
         f"fus_{variant}_{agg}" for variant in AGGREGATED_VARIANTS for agg in FUSION_AGGREGATIONS
     ]
     assert list(result.columns) == expected_cols
+
+
+# ---------------------------------------------------------------------------
+# provenance split -- HOW a sentence entered the target population
+# ---------------------------------------------------------------------------
+
+
+def _prov_row(
+    article_id,
+    sent_idx,
+    channel,
+    pos=0.6,
+    neg=0.2,
+    absa_pos=0.7,
+    absa_neg=0.1,
+    absa_neu=0.2,
+    is_boilerplate=False,
+    mentions_target=True,
+):
+    """A sentence row whose provenance flags put it in `channel`.
+
+    channel is one of PROVENANCE_CHANNELS, or None for a non-target row.
+    """
+    row = _fus_row(
+        article_id,
+        sent_idx,
+        mentions_target,
+        pos=pos,
+        neg=neg,
+        absa_pos=absa_pos,
+        absa_neg=absa_neg,
+        absa_neu=absa_neu,
+        is_boilerplate=is_boilerplate,
+    )
+    row["resolved_by_coref"] = channel in ("coref_span", "coref_nospan")
+    row["resolved_by_anaphora"] = channel == "anaphora"
+    row["anaphor_char_start"] = 3 if channel == "coref_span" else None
+    row["anaphor_char_end"] = 8 if channel == "coref_span" else None
+    return row
+
+
+def test_provenance_channel_labels_each_mechanism():
+    df = _frame(
+        [
+            _prov_row("A", 0, "surface"),
+            _prov_row("A", 1, "coref_span"),
+            _prov_row("A", 2, "coref_nospan"),
+            _prov_row("A", 3, "anaphora"),
+        ]
+    )
+    assert provenance_channel(df).tolist() == [
+        "surface",
+        "coref_span",
+        "coref_nospan",
+        "anaphora",
+    ]
+
+
+def test_provenance_channel_is_none_for_non_target_rows():
+    df = _frame([_prov_row("A", 0, "surface", mentions_target=False)])
+    assert provenance_channel(df).tolist() == [None]
+
+
+def test_provenance_channel_defaults_to_surface_without_provenance_columns():
+    """An older sentence table carries no resolution flags; every target row
+    reading as `surface` is the honest answer for a table with no evidence
+    that resolution ever happened."""
+    df = _frame([_fus_row("A", 0, True, pos=0.5, neg=0.2, absa_pos=0.6, absa_neg=0.1)])
+    assert provenance_channel(df).tolist() == ["surface"]
+
+
+def test_channels_partition_the_target_population():
+    """No sentence counted twice, none dropped -- the property that makes the
+    counts safe to sum and the shares safe to read."""
+    df = _frame(
+        [
+            _prov_row("A", 0, "surface"),
+            _prov_row("A", 1, "coref_span"),
+            _prov_row("A", 2, "coref_span"),
+            _prov_row("A", 3, "coref_nospan"),
+            _prov_row("A", 4, "anaphora"),
+            _prov_row("A", 5, "surface", is_boilerplate=True),  # excluded
+            _prov_row("A", 6, "surface", mentions_target=False),  # excluded
+        ]
+    )
+    row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    counts = [row[f"prov_{c}_n"] for c in PROVENANCE_CHANNELS]
+    assert counts == [1, 2, 1, 1]
+    assert sum(counts) == 5
+    assert sum(row[f"prov_{c}_share"] for c in PROVENANCE_CHANNELS) == pytest.approx(1.0)
+
+
+def test_provenance_does_not_change_the_blended_fusion_features():
+    """The whole point of `purely additive`: aggregate_fusion_features() must
+    return exactly what it returned before provenance existed."""
+    df = _frame(
+        [
+            _prov_row("A", 0, "surface", pos=0.8, neg=0.1, absa_pos=0.9, absa_neg=0.05),
+            _prov_row("A", 1, "coref_nospan", pos=0.2, neg=0.7, absa_pos=0.1, absa_neg=0.8),
+            _prov_row("A", 2, "coref_span", pos=0.5, neg=0.4, absa_pos=0.5, absa_neg=0.4),
+        ]
+    )
+    plain = df.drop(
+        columns=["resolved_by_coref", "resolved_by_anaphora", "anaphor_char_start", "anaphor_char_end"]
+    )
+    with_provenance = aggregate_fusion_features(df).set_index("article_id")
+    without = aggregate_fusion_features(plain).set_index("article_id")
+    pd.testing.assert_frame_equal(with_provenance, without)
+
+
+def test_channel_means_reproduce_the_blend_when_one_channel_holds_everything():
+    """An article whose target rows are all one channel: that channel's mean
+    must equal fus_<variant>_mean exactly."""
+    df = _frame(
+        [
+            _prov_row("A", 0, "coref_nospan", pos=0.8, neg=0.1, absa_pos=0.9, absa_neg=0.05),
+            _prov_row("A", 1, "coref_nospan", pos=0.2, neg=0.7, absa_pos=0.1, absa_neg=0.8),
+        ]
+    )
+    blended = aggregate_fusion_features(df).set_index("article_id").loc["A"]
+    split = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    for variant in AGGREGATED_VARIANTS:
+        assert split[f"prov_coref_nospan_{variant}_mean"] == pytest.approx(
+            blended[f"fus_{variant}_mean"]
+        )
+
+
+def test_channel_means_are_computed_over_only_that_channels_sentences():
+    df = _frame(
+        [
+            _prov_row("A", 0, "surface", pos=0.9, neg=0.0, absa_pos=1.0, absa_neg=0.0),
+            _prov_row("A", 1, "coref_nospan", pos=0.0, neg=0.9, absa_pos=0.0, absa_neg=1.0),
+        ]
+    )
+    row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    # conf_graft = absa * |fin|: surface = +1.0 * 0.9, coref_nospan = -1.0 * 0.9
+    assert row["prov_surface_conf_graft_mean"] == pytest.approx(0.9)
+    assert row["prov_coref_nospan_conf_graft_mean"] == pytest.approx(-0.9)
+
+
+def test_empty_channel_is_nan_for_sentiment_and_zero_for_count():
+    """no-signal-vs-measured-neutral: a channel with no sentences measured
+    nothing (NaN), but its count of zero is a real measurement."""
+    df = _frame([_prov_row("A", 0, "surface")])
+    row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    assert row["prov_coref_nospan_n"] == 0
+    for variant in AGGREGATED_VARIANTS:
+        assert pd.isna(row[f"prov_coref_nospan_{variant}_mean"])
+
+
+def test_article_with_no_target_sentences_has_nan_shares_and_zero_counts():
+    df = _frame([_prov_row("A", 0, "surface", mentions_target=False)])
+    row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    for channel in PROVENANCE_CHANNELS:
+        assert row[f"prov_{channel}_n"] == 0
+        assert pd.isna(row[f"prov_{channel}_share"])
+
+
+def test_boilerplate_rows_are_excluded_from_every_channel():
+    df = _frame(
+        [
+            _prov_row("A", 0, "coref_span"),
+            _prov_row("A", 1, "coref_span", is_boilerplate=True),
+        ]
+    )
+    row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
+    assert row["prov_coref_span_n"] == 1
+
+
+def test_provenance_empty_input_returns_empty_frame_with_correct_columns():
+    df = pd.DataFrame(
+        columns=[
+            "article_id",
+            "sent_idx",
+            "mentions_target",
+            "is_boilerplate",
+            "pos",
+            "neg",
+            "absa_pos",
+            "absa_neg",
+            "absa_neu",
+        ]
+    )
+    result = aggregate_provenance_features(df)
+    assert len(result) == 0
+    expected = ["article_id"]
+    for channel in PROVENANCE_CHANNELS:
+        expected.append(f"prov_{channel}_n")
+        expected.append(f"prov_{channel}_share")
+        expected.extend(f"prov_{channel}_{variant}_mean" for variant in AGGREGATED_VARIANTS)
+    assert list(result.columns) == expected

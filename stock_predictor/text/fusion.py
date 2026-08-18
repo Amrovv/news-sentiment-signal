@@ -563,3 +563,184 @@ def aggregate_fusion_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
 
     result = pd.DataFrame(rows, columns=["article_id", *fus_columns])
     return result
+
+
+# The four ways a sentence can end up in the target population, in the
+# precedence order entity_filter applies them. These PARTITION the population --
+# every target sentence lands in exactly one channel -- which is what makes the
+# counts below safe to sum and safe to reason about as shares.
+#
+# resolved_by_coref and resolved_by_anaphora can never both be True (see
+# entity_filter.py's docstring around line 834: coref only speaks for sentences
+# the heuristic did not already name, and the two flags are written from
+# mutually exclusive branches), so "neither flag set" unambiguously means the
+# sentence named the company explicitly.
+PROVENANCE_CHANNELS = ("surface", "coref_span", "coref_nospan", "anaphora")
+
+# Hand-measured referent accuracy per channel, from the 270-row labelled eval
+# set (notebook 2.7 §2-3, and coref_eval.py). THIS TABLE IS THE ENTIRE REASON
+# THIS FEATURE EXISTS, so it is recorded here rather than left in a notebook:
+#
+#   channel        | referent accuracy | share of coref population
+#   ---------------|-------------------|---------------------------
+#   surface        | UNMEASURED -- assumed ~100% because the company is named
+#                  |   literally, but nobody has audited it and it is ~76% of
+#                  |   the target population, so it now dominates the residual
+#                  |   error budget. See notebook 2.7 §11.4.
+#   coref_span     | 90.0% (n=100)     | 67.1%
+#   coref_nospan   | 68.8% (n=170)     | 32.9%
+#   anaphora       | ~60% (hand-scored, coref.py's docstring; currently OFF --
+#                  |                     USE_ANAPHORA_FALLBACK is False)
+#
+# Blended, the coref channel runs at 83.1% -- not the 93.5% notebook 2.6
+# originally reported, which was span rows only. 90.0% and 68.8% are far too
+# far apart to be averaged into one number and handed to a model as though the
+# sentences behind them were equally trustworthy: coref_nospan is ~8% of all
+# non-boilerplate target sentences and the weakest measured link in the
+# pipeline. A model given the split can learn to discount it; a model given only
+# the blend cannot, because the information was destroyed before it arrived.
+#
+# THESE FIGURES MOVED ON 2026-08-18 and superseded an earlier 89.0 / 56.5 /
+# 78.3 that this comment used to carry. Nothing about the pipeline changed --
+# two LABELLING CONVENTIONS did (a company's own products, and joint/fund/
+# generic referents, now count as the target). Notebook 2.7 §12 records the
+# full before/after. If you find 89.0 or 56.5 quoted anywhere else, it is stale.
+
+
+def provenance_channel(sentences_df: pd.DataFrame) -> pd.Series:
+    """Label every row with the channel that put it in the target population.
+
+    Returns a Series of channel names aligned to `sentences_df`, taking the
+    value None for rows that are not in the target population at all. Missing
+    provenance columns are treated as all-False rather than raising, so this
+    still works on an older sentence table or a hand-built test frame -- in
+    that case every target row reads as `surface`, which is the honest answer
+    for a table that carries no evidence of resolution having happened.
+
+    The ordering below is precedence, not preference: coref is checked before
+    anaphora only to make the mutual exclusivity explicit at the point of use.
+    """
+    n = len(sentences_df)
+    mentions = sentences_df.get("mentions_target", pd.Series(False, index=sentences_df.index))
+    mentions = mentions.fillna(False).astype(bool)
+
+    def _flag(name):
+        col = sentences_df.get(name, pd.Series(False, index=sentences_df.index))
+        return col.fillna(False).astype(bool)
+
+    by_coref = _flag("resolved_by_coref")
+    by_anaphora = _flag("resolved_by_anaphora")
+    if "anaphor_char_start" in sentences_df.columns:
+        has_span = sentences_df["anaphor_char_start"].notna()
+    else:
+        has_span = pd.Series(False, index=sentences_df.index)
+
+    channel = pd.Series([None] * n, index=sentences_df.index, dtype=object)
+    channel[mentions] = "surface"
+    channel[mentions & by_anaphora] = "anaphora"
+    channel[mentions & by_coref & has_span] = "coref_span"
+    channel[mentions & by_coref & ~has_span] = "coref_nospan"
+    return channel
+
+
+def aggregate_provenance_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
+    """Article-level sentiment and counts split by HOW each sentence was tagged.
+
+    WHY. `aggregate_fusion_features()` above pools every target sentence into
+    one number per article, which silently asserts that a sentence that named
+    the company outright and a sentence a coreference model *guessed* was about
+    the company are equally good evidence. They are not: see the measured table
+    above PROVENANCE_CHANNELS. This function does not fix the noisy channel --
+    Stage 1's judge is meant to do that -- it caps the blast radius by keeping
+    the channels separable, so a downstream price model can down-weight or drop
+    one without the text pipeline being re-run.
+
+    PURELY ADDITIVE. Nothing here reads, writes or changes any existing column.
+    `fus_*` columns are computed by a different function over an unchanged
+    population and are untouched by this one; the two are meant to be joined on
+    article_id side by side.
+
+    SPLIT SPAN FROM NO-SPAN, ALWAYS. Lumping the coref channel together is the
+    exact mistake this whole branch exists to correct -- 90.0% and 68.8% are
+    different enough to be different channels, and the only reason they ever
+    looked like one channel is that nobody had measured the second one.
+
+    COLUMNS, four per channel (16 total):
+
+      * prov_<channel>_n      -- count of population sentences in the channel.
+      * prov_<channel>_share  -- that count over the article's whole target
+        population. An explicit column rather than a ratio left for the model
+        to form, for exactly the reason `_spread` is explicit above: tree-based
+        models split on single features and cannot easily construct a ratio of
+        two of them.
+      * prov_<channel>_<variant>_mean, for each variant in
+        AGGREGATED_VARIANTS -- the channel's own mean fusion score.
+
+    Only the MEAN is split by channel, not all six aggregations from
+    FUSION_AGGREGATIONS. That would be 48 columns of unvalidated feature for a
+    hypothesis nobody has tested yet; this module's own precedent (see
+    AGGREGATED_VARIANTS, which promotes 2 of 8 variants on measured evidence)
+    is to keep the feature table narrow until something earns its width. Tail
+    statistics per channel are a reasonable next step IF the means turn out to
+    carry signal.
+
+    POPULATION. Identical to `aggregate_fusion_features()`:
+    `mentions_target & ~is_boilerplate`, further restricted per variant to rows
+    whose own score is non-null. Identical on purpose -- the channel means must
+    be comparable to `fus_<variant>_mean` on the same article, and they only
+    are if the two read the same sentences.
+
+    NaN, NEVER 0, for an empty channel -- the same no-signal-vs-measured-neutral
+    rule the rest of the text layer follows. An article with no coref_nospan
+    sentences has measured nothing about that channel; 0.0 would claim it
+    measured neutrality. Counts are the exception and are 0, not NaN: "this
+    article has zero coref_nospan sentences" is a real, measured count.
+
+    Returns one row per article_id, with a stable 17-column schema (article_id
+    plus 16) even for an empty input.
+    """
+    prov_columns = []
+    for channel in PROVENANCE_CHANNELS:
+        prov_columns.append(f"prov_{channel}_n")
+        prov_columns.append(f"prov_{channel}_share")
+        for variant in AGGREGATED_VARIANTS:
+            prov_columns.append(f"prov_{channel}_{variant}_mean")
+
+    if len(sentences_df) == 0:
+        return pd.DataFrame(columns=["article_id", *prov_columns])
+
+    sentences_df = sentences_df.copy().reset_index(drop=True)
+    if "is_boilerplate" in sentences_df.columns:
+        sentences_df["is_boilerplate"] = sentences_df["is_boilerplate"].fillna(False).astype(bool)
+    else:
+        sentences_df["is_boilerplate"] = False
+    sentences_df["mentions_target"] = sentences_df["mentions_target"].fillna(False).astype(bool)
+
+    sentences_df["__channel"] = provenance_channel(sentences_df)
+    variant_scores = score_variants(sentences_df)
+    for variant in AGGREGATED_VARIANTS:
+        sentences_df[f"__fus_{variant}"] = variant_scores[variant]
+
+    rows = []
+    for article_id, group in sentences_df.groupby("article_id", sort=False):
+        target = group[group["mentions_target"] & ~group["is_boilerplate"]]
+        n_target = len(target)
+
+        row = {"article_id": article_id}
+        for channel in PROVENANCE_CHANNELS:
+            in_channel = target[target["__channel"] == channel]
+            row[f"prov_{channel}_n"] = len(in_channel)
+            # NaN share for an article with no target sentences at all: there
+            # is no denominator, and 0.0 would claim the channel was measured
+            # and found empty rather than that nothing was measured.
+            row[f"prov_{channel}_share"] = (
+                len(in_channel) / n_target if n_target else float("nan")
+            )
+            for variant in AGGREGATED_VARIANTS:
+                scores = in_channel[f"__fus_{variant}"].dropna()
+                row[f"prov_{channel}_{variant}_mean"] = (
+                    scores.mean() if len(scores) > 0 else float("nan")
+                )
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=["article_id", *prov_columns])

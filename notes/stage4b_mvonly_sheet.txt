@@ -1,0 +1,603 @@
+===== MVONLY-2 | article 136495983 | sent 29 | span =====
+HEADLINE: Better EV Stock: Rivian vs. Tesla
+MAVERICK ANAPHOR at char 136: 'its approach.'
+
+  [25] The company has launched a small pilot robotaxi program in Austin, Texas, but the service is limited to a geofenced area and requires a Tesla employee as a safety driver.
+  [26] It's also already drawn scrutiny from local officials after several safety incidents.
+  [27] Tesla is promising a rapid rollout of robotaxis across half the U.S. by year-end pending regulatory approvals, but the technology does not appear ready.
+  [28] Its decision to eschew lidar technology and use a camera-only approach remains controversial.
+>>[29] This design saves costs, but the technology has struggled in some complex driving conditions, leading to questions around the safety of its approach.
+  [30] By comparison, Alphabet's Waymo robotaxi is far ahead, with years of experience operating paid, driverless rides in multiple cities.
+
+===== MVONLY-3 | article 136885570 | sent 9 | span =====
+HEADLINE: Why Tesla (TSLA) Stock Is Trading Lower Today
+MAVERICK ANAPHOR at char 104: 'it received a wave of positive commentar'
+
+  [5] Is now the time to buy Tesla?
+  [6] Access our full analysis report here, it's free .
+  [7] Tesla's shares are extremely volatile and have had 46 moves greater than 5% over the last year.
+  [8] In that context, today's move indicates the market considers this news meaningful but not something that would fundamentally change its perception of the business.
+>>[9] The previous big move we wrote about was about 22 hours ago when the stock gained 3.9% on the news that it received a wave of positive commentary from Wall Street analysts and upbeat forecasts for third-quarter vehicle deliveries.
+  [10] Wolfe Research stated that the electric vehicle maker's Q3 deliveries could reach between 465,000 and 470,000 units, topping consensus estimates of 445,000.
+
+===== MVONLY-4 | article 136885570 | sent 13 | span =====
+HEADLINE: Why Tesla (TSLA) Stock Is Trading Lower Today
+MAVERICK ANAPHOR at char 44: 'the stock to a "Buy."'
+
+  [9] The previous big move we wrote about was about 22 hours ago when the stock gained 3.9% on the news that it received a wave of positive commentary from Wall Street analysts and upbeat forecasts for third-quarter vehicle deliveries.
+  [10] Wolfe Research stated that the electric vehicle maker's Q3 deliveries could reach between 465,000 and 470,000 units, topping consensus estimates of 445,000.
+  [11] The firm partly attributed the potential lift in volume to consumers speeding up purchases before a $7,500 federal EV tax credit expired.
+  [12] Adding to the positive sentiment, Piper Sandler's Alexander Potter raised his price target to $500 from $400, highlighting Tesla's strength in artificial intelligence.
+>>[13] Similarly, Baird analyst Ben Kallo upgraded the stock to a "Buy."
+  [14] One prominent analyst, Dan Ives, forecasted that the company's march to a $2 trillion valuation had begun, driven by opportunities in AI and autonomous Robotaxis.
+
+===== MVONLY-6 | article 136907450 | sent 19 | no-span =====
+HEADLINE: Lightship's electric RVs are bringing campgrounds into the future
+
+  [15] 10% of the country, believe it or not, uh own an RV.
+  [16] So this is this is huge, you know, huge part of Americana.
+  [17] And yet RVs in a lot of ways have not changed in 20, 30, maybe 40 years.
+  [18] And so I thought, my co-founder thought, um he was also Tesla that it was uh it was time for a big refresh of the RV.
+>>[19] The world has changed a lot over the past 20 or 30 years and we thought it was time to bring bring RVs up to date and into this, you know, this this new age of digitization, electrification, and still keep um, you know, the the the most beautiful parts of camping the the same that they've always been.
+  [20] I think in some ways camping is even better in such a, you know, an action packed world today than, um, than in decades past.
+
+===== MVONLY-7 | article 136907450 | sent 33 | no-span =====
+HEADLINE: Lightship's electric RVs are bringing campgrounds into the future
+
+  [29] We were talking about about COVID off air.
+  [30] It really accelerated during COVID.
+  [31] So so many people in you know, our generation, millennial generation, um got to experience RVing for the first time and we're we're converted by it
+  [32] and uh, yeah, the the the great American road trip is alive and well.
+>>[33] It's just uh it's it's getting better and we're trying to try to um hasten that.
+  [34] What are the benefits then?
+
+===== MVONLY-10 | article 136907450 | sent 48 | no-span =====
+HEADLINE: Lightship's electric RVs are bringing campgrounds into the future
+
+  [44] and I found our our start.
+  [45] He he led the finance team there.
+  [46] I was a battery engineer there.
+  [47] Um other other new automotive startups that have since grown big, places like Rivian, Lucid and applied what we had learned there to this new space.
+>>[48] So we took a ground up approach, we thought about um if you're starting from scratch, what should a towable RV behave like?
+  [49] And what came out if uh if people go to our our website, lightshiprv.com is uh basically a road-going spaceship.
+
+===== MVONLY-12 | article 136907450 | sent 50 | no-span =====
+HEADLINE: Lightship's electric RVs are bringing campgrounds into the future
+
+  [46] I was a battery engineer there.
+  [47] Um other other new automotive startups that have since grown big, places like Rivian, Lucid and applied what we had learned there to this new space.
+  [48] So we took a ground up approach, we thought about um if you're starting from scratch, what should a towable RV behave like?
+  [49] And what came out if uh if people go to our our website, lightshiprv.com is uh basically a road-going spaceship.
+>>[50] This this thing looks, it's not your grandfather's RV, although we do have a lot of grandpas who are who are excited about it.
+  [51] It looks totally unique.
+
+===== MVONLY-20 | article 137228477 | sent 11 | span =====
+HEADLINE: Tesla’s Next Huge Challenge
+MAVERICK ANAPHOR at char 45: 'it does not have the high tariffs on Chi'
+
+  [7] Tesla’s biggest sales challenge has been in the European Union.
+  [8] In some months of this year, sales were down by well into double-digit percentages year over year.
+  [9] Much of the challenge came from legacy companies, including Volkswagen, Mercedes, and BMW.
+  [10] The United Kingdom is a market altogether different from the EU.
+>>[11] As the Financial Times recently pointed out, it does not have the high tariffs on Chinese EVs that the EU and U.S. do.
+  [12] The Chinese EV companies can fight toe to toe with one another and the legacy car companies in the U.K. on an equal footing.
+
+===== MVONLY-21 | article 137228477 | sent 12 | no-span =====
+HEADLINE: Tesla’s Next Huge Challenge
+
+  [8] In some months of this year, sales were down by well into double-digit percentages year over year.
+  [9] Much of the challenge came from legacy companies, including Volkswagen, Mercedes, and BMW.
+  [10] The United Kingdom is a market altogether different from the EU.
+  [11] As the Financial Times recently pointed out, it does not have the high tariffs on Chinese EVs that the EU and U.S. do.
+>>[12] The Chinese EV companies can fight toe to toe with one another and the legacy car companies in the U.K. on an equal footing.
+  [13] “Currently the UK market is more open and a friend for Chinese brands,” Michael Yang, the head of Geely Auto UK, told the paper.
+
+===== MVONLY-26 | article 137230891 | sent 2 | span =====
+HEADLINE: With Near-Term Uncertainty Ahead, Should Investors Avoid Tesla Stock or Bet on Its Future?
+MAVERICK ANAPHOR at char 0: 'The stock is up about 10% on the year as'
+
+  [0] Tesla ( TSLA +3.80% ) returned to revenue growth when it reported its third-quarter results, but the company missed earnings estimates and warned of near-term uncertainty.
+  [1] While most other stocks would have likely fallen precipitously with similar results and commentary, Tesla shares edged higher as investors still believe in CEO Elon Musk's long-term vision.
+>>[2] The stock is up about 10% on the year as of this writing.
+  [3] Let's take a close look at electric vehicle (EV) maker's Q3 results and prospects to see if now is a good time to buy the stock or if investors should stay away.
+
+===== MVONLY-32 | article 137268657 | sent 27 | no-span =====
+HEADLINE: As Tesla Stock Disappoints on Earnings Yet Again, CEO Elon Musk Shares That This 1 Thing Is ‘His Biggest Concern’
+
+  [23] Musk remarked that Tesla was uniquely positioned for this, citing the company’s strengths in manufacturing and technology.
+  [24] He highlighted, for example, the extensive work put into developing a highly dexterous robotic hand.
+  [25] But then, he turned the discussion toward his own influence, expressing his “fundamental concern” about potentially being “ousted” after creating an “enormous robot army.”
+  [26] “My fundamental concern with regard to how much voting control I have at Tesla is, if I go ahead and build this enormous robot army, can I just be ousted at some point in the future?
+>>[27] That’s my biggest concern,” Musk told investors.
+  [28] Essentially, he defended his proposed $1 trillion compensation package.
+
+===== MVONLY-41 | article 138291026 | sent 14 | span =====
+HEADLINE: Elon Musk's Latest Big Move: Tesla Won't Make Two of Its Car Models Anymore
+MAVERICK ANAPHOR at char 152: 'them and repurpose it to make the robots'
+
+  [10] It's part of our overall shift to an autonomous future."
+  [11] (The call was associated with Tesla's latest results; read more Investopedia coverage of today's Magnificent Seven earnings here .)
+  [12] Musk is in the process of leading Tesla through a high-stakes—for both him and the company —transition from a carmaker into a business he hopes to position at the forefront of autonomous driving, robotics and artificial intelligence.
+  [13] Its auto deliveries fell year-over-year in 2025, and Musk among other things wants to start producing its Optimus robots at scale this year .
+>>[14] That's part of the reason he's ending the S and X programs: Musk on Wednesday said he would take Fremont., Calif., factory space currently used to make them and repurpose it to make the robots instead.
+  [15] Musk did say the company will support the S and X "for as long as people have the vehicles."
+
+===== MVONLY-42 | article 138291026 | sent 16 | span =====
+HEADLINE: Elon Musk's Latest Big Move: Tesla Won't Make Two of Its Car Models Anymore
+MAVERICK ANAPHOR at char 11: 'their production has another side effect'
+
+  [12] Musk is in the process of leading Tesla through a high-stakes—for both him and the company —transition from a carmaker into a business he hopes to position at the forefront of autonomous driving, robotics and artificial intelligence.
+  [13] Its auto deliveries fell year-over-year in 2025, and Musk among other things wants to start producing its Optimus robots at scale this year .
+  [14] That's part of the reason he's ending the S and X programs: Musk on Wednesday said he would take Fremont., Calif., factory space currently used to make them and repurpose it to make the robots instead.
+  [15] Musk did say the company will support the S and X "for as long as people have the vehicles."
+>>[16] But ending their production has another side effect: The jocular observation that, taken together, one could use the names of four Teslas to spell "S3XY" won't work for much longer.
+  [17] In the meantime, you can still buy the Teslas that will soon be American automotive history.
+
+===== MVONLY-45 | article 138298479 | sent 19 | span =====
+HEADLINE: Tesla just made it clear: It's no longer a car company
+MAVERICK ANAPHOR at char 166: 'its reach.'
+
+  [15] Basically, driving a car like the Model S isn't the future, but a car driving you is.
+  [16] In a first for the company, Tesla revealed it has 1.1 million paying subscribers for its full self-driving (FSD) business.
+  [17] "FSD subscriptions are tied to Musk's performance package and are now a reported metric, standing at 1.1 million active subscriptions with 38% year-over-year growth, outpacing cumulative vehicle deliveries at 22%," William Blair analyst Jed Dorsheimer wrote in a note.
+  [18] Tesla is essentially going all in on FSD and getting the software active in as many vehicles as possible.
+>>[19] It also means offering it only as a subscription, as Musk revealed earlier this month, and selling cheaper vehicles, like the standard Model 3 and Model Y, to expand its reach.
+  [20] And those vehicles could eventually end up in Tesla's robotaxi network, a dream of Musk's.
+
+===== MVONLY-46 | article 138298479 | sent 31 | no-span =====
+HEADLINE: Tesla just made it clear: It's no longer a car company
+
+  [27] Even the Cybertruck, Tesla's newest (and most polarizing) vehicle, may become a fully autonomous delivery truck.
+  [28] "We will transition the Cybertruck line to just a fully autonomous line.
+  [29] And there's obviously a market there for cargo delivery, like localized cargo delivery within a city … There's a lot of cargo that needs to move locally within a city, and an autonomous Cybertruck could be very useful for that," Musk said, a notion that would have been unthinkable when Musk revealed his cyberpunk vision of the truck in late 2019.
+  [30] Autonomous Cybertrucks making local deliveries is one thing, but Tesla's humanoid robot, Optimus, is truly Musk's big bet on Tesla's future.
+>>[31] "Trading S and X for Optimus is an 8x Revenue Multiplier," Blair's Dorsheimer claimed, calculating that while those cars brought in around $3 billion in revenue, Optimus sales would be much larger.
+  [32] "If we [halve] Elon Musk's million Optimus per year capacity to 500,000 and assume a $50,000 ASP [average selling price], that's $25 billion.
+
+===== MVONLY-50 | article 138307221 | sent 80 | span =====
+HEADLINE: FSD's Big Week, Greg Abel Makes a Mark on Berkshire Hathaway, and 24/7 Trading
+MAVERICK ANAPHOR at char 0: "They weren't able to offer those deals."
+
+  [76] Part of, I think, what Lemonade and Tesla are doing here is marketing.
+  [77] I think it's a neat idea.
+  [78] 50% off is better than Tesla was willing to do.
+  [79] Travis Hoium: It's so interesting.
+>>[80] They weren't able to offer those deals.
+  [81] I don't think Lemonade did it better.
+
+===== MVONLY-55 | article 138968861 | sent 4 | no-span =====
+HEADLINE: Tesla's China Rival Li Auto Grapples With Recall Impact, Lower Demand
+
+  [0] Quarterly revenue fell 36.2% year over year to 27.4 billion Chinese yuan ($3.80 billion), though it came in slightly ahead of the analyst consensus estimate of $3.76 billion .
+  [1] Adjusted net earnings per ADS showed a loss of 0.36 yuan (5 cents), missing the Street’s expectation of a 4-cent gain.
+  [2] Vehicle sales dropped 37.4% to $3.6 billion, driven primarily by weaker delivery volumes.
+  [3] Li Auto delivered 93,211 vehicles during the period, down 39.0% from 152,831 units a year earlier and below the 111,074 units delivered in the second quarter of 2025.
+>>[4] Also Read: NIO And Li Auto Fall
+  [5] As Beijing Tightens Grip On EV Exports Vehicle margin contracted 540 basis points to 15.5%.
+
+===== MVONLY-59 | article 138968861 | sent 11 | span =====
+HEADLINE: Tesla's China Rival Li Auto Grapples With Recall Impact, Lower Demand
+MAVERICK ANAPHOR at char 22: 'the company operated 542 retail stores a'
+
+  [7] Gross margin fell 520 basis points to 16.3%, or 20.4% when adjusting for the recall-related impact.
+  [8] Li Auto ended the quarter with $13.9 billion in cash and equivalents.
+  [9] The company reported a net operating cash outflow of 7.4 billion yuan ($1.0 billion) in the third quarter of 2025, reversing from 11.0 billion yuan in net operating cash inflow a year earlier and widening from the 3.0 billion yuan outflow recorded in the second quarter of 2025.
+  [10] Free cash flow was negative 8.9 billion yuan ($1.3 billion), compared with 9.1 billion yuan in the prior-year period and a 3.8 billion yuan outflow in the previous quarter.
+>>[11] As of Sept. 30, 2025, the company operated 542 retail stores across 157 cities, 546 service centers, Li Auto-authorized body and paint shops in 225 cities, and 3,420 supercharging stations with 18,897 charging stalls.
+  [12] Chairman and CEO Xiang Li said combined orders for the Li i8 and Li i6 surpassed 100,000, while adoption of the company’s VLA Driver large AI model reached a 91% monthly usage rate in October.
+
+===== MVONLY-66 | article 139223905 | sent 25 | no-span =====
+HEADLINE: Tesla European sales, Lucid Q4 earnings, Lamborghini: EV latest
+
+  [21] Do you when you you when you see that number of BYD, that is a remarkable surge.
+  [22] That is do you think that's price?
+  [23] I think it's I think it's mostly price.
+  [24] I think that they're just undercutting European makers, Tesla, whoever else, other other other other automakers.
+>>[25] A lot of those are hybrids, right?
+  [26] So you know, that's that's going to be a cheaper car in general
+
+===== MVONLY-67 | article 139223905 | sent 39 | no-span =====
+HEADLINE: Tesla European sales, Lucid Q4 earnings, Lamborghini: EV latest
+
+  [35] Usually you don't let they let you do that.
+  [36] But they were so high on it.
+  [37] Um and it was cutting edge design, really cool interior.
+  [38] They thought this was the future.
+>>[39] and it turns out, you know, we people we spoke to, you know, the CEO Stephan Winkelmann a while back and other people there saying, what's the demand like?
+  [40] Are people asking for it?
+
+===== MVONLY-70 | article 139559196 | sent 6 | span =====
+HEADLINE: Tesla Terafab Deal Fuels SpaceX Merger Talk And AI Chip Ambitions
+MAVERICK ANAPHOR at char 22: 'the stock has seen a 1.7% decline over t'
+
+  [2] Speculation around a potential Tesla and SpaceX merger has intensified after the companies announced a joint Terafab semiconductor factory in Austin, Texas.
+  [3] New information on how AI, robotics and space operations could be integrated across both companies is drawing fresh attention from analysts and investors.
+  [4] The Terafab project is being framed as a shared chip fabrication platform that could support Tesla's vehicle and AI ambitions alongside SpaceX's space focused projects.
+  [5] Tesla, traded as NasdaqGS:TSLA, last closed at $361.83, with the share price reflecting a 37.3% return over the past year and a 74.4% return over three years.
+>>[6] Over shorter periods, the stock has seen a 1.7% decline over the past week, a 13.3% decline over the past month and a 17.4% decline year to date.
+  [7] In that context, the Terafab partnership with SpaceX adds another angle to how investors might think about Tesla's exposure to AI hardware and space adjacent projects.
+
+===== MVONLY-71 | article 139559196 | sent 33 | span =====
+HEADLINE: Tesla Terafab Deal Fuels SpaceX Merger Talk And AI Chip Ambitions
+MAVERICK ANAPHOR at char 0: 'It does not constitute a recommendation '
+
+  [29] In parallel, track how Tesla's auto deliveries, energy storage growth and Full Self Driving regulatory reviews evolve, because those cash flows and approvals will likely fund and justify the much larger AI and robotics bets now being tied to Terafab.
+  [30] To ensure you're always in the loop on how the latest news impacts the investment narrative for Tesla, head to the community page for Tesla to never miss an update on the top community narratives.
+  [31] This article by Simply Wall St is general in nature.
+  [32] We provide commentary based on historical data and analyst forecasts only using an unbiased methodology and our articles are not intended to be financial advice.
+>>[33] It does not constitute a recommendation to buy or sell any stock, and does not take account of your objectives, or your financial situation.
+  [34] We aim to bring you long-term focused analysis driven by fundamental data.
+
+===== MVONLY-73 | article 139577778 | sent 5 | span =====
+HEADLINE: Ross Gerber Slams Tesla's FSD For Being 'Level 2' As Gary Black Decries Marketing Strategy: 'You Still Basically Have...'
+MAVERICK ANAPHOR at char 59: 'it was negatively impacted by a lack of '
+
+  [1] Gerber, in his response, shared that the system still needed to make improvements.
+  [2] So you still have to basically drive,” he said, referring to Tesla’s FSD being at a level 2, according to the Society of Automotive Engineers (SAE).
+  [3] Broadly speaking, a Level 2 rating means that the system is capable of handling some autonomous tasks, but cannot be considered fully autonomous.
+  [4] Responding to the same post, investor Gary Black of The Future Fund LLC also weighed in on the technology.
+>>[5] He shared that while the technology was a “great product,” it was negatively impacted by a lack of marketing.
+  [6] “The problem is a total lack of awareness with no advertising,” he said.
+
+===== MVONLY-75 | article 139598228 | sent 2 | no-span =====
+HEADLINE: Robinhood, SoFi Sidelined In SpaceX IPO? 'False,' Elon Musk Says
+
+  [0] Tesla, Inc. (NASDAQ: TSLA ) trades roughly 60 million shares a day.
+  [1] Retail participation across U.S. equities sits near 20%, but Tesla skews higher — closer to 25%.
+>>[2] That implies roughly 15 million shares of daily retail volume.
+  [3] Now consider where that flow sits.
+
+===== MVONLY-76 | article 139598228 | sent 3 | no-span =====
+HEADLINE: Robinhood, SoFi Sidelined In SpaceX IPO? 'False,' Elon Musk Says
+
+  [0] Tesla, Inc. (NASDAQ: TSLA ) trades roughly 60 million shares a day.
+  [1] Retail participation across U.S. equities sits near 20%, but Tesla skews higher — closer to 25%.
+  [2] That implies roughly 15 million shares of daily retail volume.
+>>[3] Now consider where that flow sits.
+  [4] Robinhood dominates high-frequency retail trading in names like Tesla, while SoFi continues to scale its app-first investor base.
+
+===== MVONLY-80 | article 139908240 | sent 73 | span =====
+HEADLINE: Earnings Season Surprises
+MAVERICK ANAPHOR at char 41: 'They said they were going to spend $20 b'
+
+  [69] The car business could still have significant potential from here.
+  [70] Tyler Crowe: Here's the thing I found.
+  [71] I guess you could say, peculiar is the right word to figure out, because we talked about these grand, ambitious numbers, like the amount of money that it would take to do the things that we're talking about here, and the 10 million robots a year.
+  [72] There's obviously the plans for robotaxis and Cybercab, and things like that.
+>>[73] This is where it became peculiar for me: They said they were going to spend $20 billion this year, and then this quarter, they bumped that spending plan up to $25 billion for the year.
+  [74] Obviously, they're seeing the direction of this.
+
+===== MVONLY-84 | article 139908240 | sent 79 | span =====
+HEADLINE: Earnings Season Surprises
+MAVERICK ANAPHOR at char 113: "they said they're going to be more they'"
+
+  [75] But Q1 capital spending came in at $2.5 billion.
+  [76] It was actually quite small.
+  [77] It was more or less on pace with what they've been doing for the past 6-8 quarters.
+  [78] It's also why it posted free cash flow this quarter, when analysts were mostly expecting cash outflows because it was way less spending than I think a lot of the analysts were expecting.
+>>[79] I acknowledge that spending can ramp throughout the year, but considering how ambitious the plans were, how much they said they're going to be more they're going to be spending, it's going to be a massive ramp-up in the second half of the year.
+  [80] It'll be interesting to see how that happens because we're talking about AI data centers, and supply chains in the United States are really strained for manufacturing construction capacity right now.
+
+===== MVONLY-90 | article 139915918 | sent 1 | no-span =====
+HEADLINE: Tesla Shares Rise 4% After Key Trading Signal
+
+  [0] Tesla Inc (NASDAQ: TSLA ) experienced a significant Power Inflow alert, a key bullish indicator that is closely tracked by traders who value order flow analytics, specifically institutional and retail order flow data.
+>>[1] Understanding the Power Inflow Signal Order flow analytics analyze real-time buying and selling trends by examining the volume, timing, and order size across both retail and institutional traders.
+  [2] These insights offer a more detailed understanding of price behavior and market sentiment for a stock, allowing the trader or institution to make the most informed decision possible.
+
+===== MVONLY-92 | article 140059712 | sent 1 | no-span =====
+HEADLINE: Musk Thinks $10 Trillion SpaceX Package Would Be A 'Good Deal' But Warns Dollars Could Become Obsolete As Humanity Reaches Kardashev II Civilization
+
+  [0] Elon Musk on Tuesday shared his views on SpaceX’s reported pay package , which could be tied to the colonization of Mars and orbital datacenters.
+>>[1] User @beffjezos quoted a post on X that shared details about the purported pay package.
+  [2] The user predicted what Musk’s SpaceX package could look like.
+
+===== MVONLY-95 | article 140432727 | sent 0 | no-span =====
+HEADLINE: Rivian Stock Flashes Death Cross As Tesla Model Y Rival Nears Launch
+
+>>[0] Shares of Rivian have formed a Death Cross — a bearish technical pattern that occurs when the 50-day moving average falls below the 200-day moving average — as investors continue debating whether the company's upcoming R2 crossover can meaningfully revive growth and narrow Rivian's long-running profitability concerns.
+  [1] The setup creates an awkward moment for Rivian bulls.
+
+===== MVONLY-97 | article 140725650 | sent 2 | span =====
+HEADLINE: Why Does Sweden Want to Block Tesla's FSD Expansion in Europe?
+MAVERICK ANAPHOR at char 110: 'its current form.'
+
+  [0] Oops, something went wrong Tesla, Inc. 's TSLA Full Self-Driving (FSD) system recently gained access to public roads in the Netherlands, marking its first approval in Europe and fueling expectations of a broader rollout across the continent.
+  [1] However, not all countries support the expansion.
+>>[2] Sweden's Transport Administration (TRV) has urged the European Union to reject the wider deployment of FSD in its current form.
+  [3] A key concern for Swedish regulators is Tesla's "Speed Offset" feature, which allows FSD-equipped vehicles to travel above posted speed limits, per Reuters.
+
+===== MVONLY-102 | article 140729332 | sent 3 | span =====
+HEADLINE: Is What Trillionaire Elon Musk Said Enough of a Reason to Buy Tesla Stock?
+MAVERICK ANAPHOR at char 60: 'the EV stock ?'
+
+  [0] Tesla ( TSLA +3.80% ) shares have soared 2,810% in the past decade (as of June 23).
+  [1] The success of the electric vehicle (EV) maker (which is one of the world's most valuable companies), coupled with the recent initial public offering of Space Exploration Technologies , has made CEO Elon Musk the world's first trillionaire.
+  [2] On Tesla's first-quarter 2026 earnings call in April, Musk made a bold prediction that should spark the market's curiosity.
+>>[3] Are the tech entrepreneur's words enough of a reason to buy the EV stock ?
+  [4] Image source: The Motley Fool.
+
+===== MVONLY-105 | article 140749915 | sent 56 | no-span =====
+HEADLINE: A $290,000 Tesla Semi for $50,000?? California’s Incentive Stack Is Real, but the Number Hides as Much as It Reveals.
+
+  [52] For the operation it fits, it can fit very well.
+  [53] For long-haul, it is not the tool, regardless of price.
+  [54] Then there is charging.
+  [55] The Semi relies on Tesla's Megacharger network and megawatt-class charging to hit 60% in about 30 minutes, and that infrastructure is still early.
+>>[56] Even supporters of the rollout acknowledge a mismatch between where the voucher commitments are and where operational fast-charging actually exists, with multiple California counties holding voucher commitments but lacking the heavy-duty charging capacity to support the trucks.
+  [57] A cheap truck you cannot conveniently charge on your lanes is not a bargain.
+
+===== MVONLY-106 | article 140759177 | sent 33 | span =====
+HEADLINE: TSLA Stock Under Pressure: Analyst Says $600 Bull Case Hinges On 40-Car Robotaxi Fleet Scaling Past Nasdaq Lag
+MAVERICK ANAPHOR at char 106: 'the stock.'
+
+  [29] Tesla’s consensus delivery estimates point to a 6% year-over-year gain in the second quarter and a 1% rise for 2026, suggesting deliveries may avoid a third straight annual decline.
+  [30] However, Black said EVs remain core to Tesla’s business, accounting for 72% of gross profit, making a 200x P/E harder to defend, while earnings shrink and unsupervised autonomy remains stalled.
+  [31] Black also dismissed speculation that SpaceX could acquire Tesla as a “silly idea,” citing potential dilution and governance concerns.
+  [32] On Stocktwits, retail sentiment for TSLA was ‘bearish’ amid a 9% rise in 24-hour message volumes.
+>>[33] The ticker’s water base has also climbed just 2% over the past year, indicating modest retail interest in the stock.
+  [34] Advertisement | Remove ads.
+
+===== MVONLY-107 | article 140762091 | sent 1 | no-span =====
+HEADLINE: Comparative Study: Tesla And Industry Competitors In Automobiles Industry
+
+  [0] By conducting an in-depth analysis of Tesla, we can identify the following trends: The debt-to-equity (D/E) ratio assesses the extent to which a company relies on borrowed funds compared to its equity.
+>>[1] Considering the debt-to-equity ratio in industry comparisons allows for a concise evaluation of a company's financial health and risk profile, aiding in informed decision-making.
+  [2] In light of the Debt-to-Equity ratio, a comparison between Tesla and its top 4 peers reveals the following information: Among its top 4 peers, Tesla has a stronger financial position with a lower debt-to-equity ratio of 0.19 .
+
+===== MVONLY-110 | article 140775177 | sent 1 | no-span =====
+HEADLINE: Michael Burry bets against Tesla, Nvidia in new AI bubble short positions
+
+  [0] Oops, something went wrong Investing.com -- Michael Burry, "Big Short" fame investor disclosed on Tuesday that he has opened a new short position against Elon Musk's Tesla, saying he sold the stock short at $416.22 as part of a broader wave of bearish bets against companies tied to artificial intelligence and semiconductors.
+>>[1] The investor, best known for predicting the 2008 housing market collapse, revealed the trade in his Substack newsletter post titled Trading Post June 30, 2026 , describing the positions as part of a broader wager against what he views as an increasingly inflated AI and semiconductor market.
+  [2] Alongside Tesla, Burry said he initiated short positions on Tuesday in Caterpillar Inc (NYSE:CAT) at $1,060.98, NVIDIA Corporation (NASDAQ:NVDA) at $198.09, theiShares Semiconductor ETF (NASDAQ:SOXX) ETF at $642.80, and Applied Materials Inc (NASDAQ:AMAT) at $729.40.
+
+===== MVONLY-112 | article 141045206 | sent 5 | span =====
+HEADLINE: Strip Away Your Bias and Take a Look at Tesla Objectively
+MAVERICK ANAPHOR at char 0: 'The stock has shed roughly a third of it'
+
+  [1] TSLA trades at 156x forward earnings, above its $210 to $240 intrinsic value but below what a confirmed Robotaxi ramp would justify.
+  [2] Analyst consensus targets $401 for 30% upside, but prediction markets assign only 15% odds that Optimus meaningfully ships this year.
+  [3] It sounds nuts, but SoFi 1 is giving new Active Invest users up to $3,000 in stock for a limited time, and all it takes is a $50 deposit to get started.
+  [4] 2 See for yourself (Sponsor) Sending You to Google News in 3 At $309.22, Tesla ( NASDAQ:TSLA | TSLA Price Prediction ) screens as fairly valued with a neutral risk/reward.
+>>[5] The stock has shed roughly a third of its value since New Year’s, yet still trades at a valuation that assumes flawless execution on Robotaxi, Optimus, and an AI stack currently torching free cash flow.
+  [6] Tesla is a vertically integrated EV manufacturer with a fast-growing energy storage business and an ambitious AI and robotics roadmap.
+
+===== MVONLY-114 | article 141045206 | sent 22 | no-span =====
+HEADLINE: Strip Away Your Bias and Take a Look at Tesla Objectively
+
+  [18] Polymarket traders assign only a 15% probability that Optimus meaningfully ships this year, and composite prediction-market sentiment sits at a neutral-bearish 41.98.
+  [19] The facts sit between the extremes.
+  [20] Revenue is accelerating, but net income is shrinking 3% year over year.
+  [21] Robotaxi miles are compounding, but capex of $5.79 billion is the reason cash flow inverted.
+>>[22] This is a company mid-transition, spending today to monetize an AI and autonomy thesis that traders explicitly doubt on near-term timelines.
+  [23] A more constructive stance would require evidence that Optimus and Cybercab economics are real, or that automotive margins have bottomed.
+
+===== MVONLY-115 | article 141045206 | sent 28 | no-span =====
+HEADLINE: Strip Away Your Bias and Take a Look at Tesla Objectively
+
+  [24] A more negative stance would require a demand crack in core auto or a durable break in the AI capex return story.
+  [25] Neither is visible in the current quarter.
+  [26] Tesla trades at $309.22 against an analyst consensus target of $401.07 drawn from 47 analysts, implying roughly 30% upside if consensus is right.
+  [27] The rating breakdown skews mixed:
+>>[28] Shares are down 31.24% year to date and 18.56% over the past month.
+  [29] Over the same post-earnings window that Tesla fell 18.5%, the S&P 500 tracker moved from $738.18 to $739.09, essentially flat.
+
+===== MVONLY-116 | article 141045206 | sent 30 | no-span =====
+HEADLINE: Strip Away Your Bias and Take a Look at Tesla Objectively
+
+  [26] Tesla trades at $309.22 against an analyst consensus target of $401.07 drawn from 47 analysts, implying roughly 30% upside if consensus is right.
+  [27] The rating breakdown skews mixed:
+  [28] Shares are down 31.24% year to date and 18.56% over the past month.
+  [29] Over the same post-earnings window that Tesla fell 18.5%, the S&P 500 tracker moved from $738.18 to $739.09, essentially flat.
+>>[30] This is a Tesla-specific reset.
+  [31] At $309, the risk/reward looks balanced.
+
+===== MVONLY-118 | article 141109936 | sent 17 | span =====
+HEADLINE: Elon Musk spends half his time talking robots and AI on Tesla earnings calls
+MAVERICK ANAPHOR at char 83: 'the automotive business.'
+
+  [13] In the year that followed, Musk only spent around 2% or less of his time talking about the project.
+  [14] Over the past year, though, he's spent at least 10% of his remarks talking up Optimus, with it occupying nearly a third of his focus on the Q3 call in 2025.
+  [15] Musk ramped up how often he talks about these futuristic ideas at the same time that Tesla's core automotive business stopped growing.
+  [16] As a result, he now spends less than a third of his time on earnings calls talking about cars and manufacturing.
+>>[17] On that same Q3 call last year, Musk spent less than 20% of his time talking about the automotive business.
+  [18] The other Tesla executives who appear on the company's earnings calls, like chief financial officer Vaibhav Taneja and vice president of engineering Lars Moravy, have been much slower to shift their focus.
+
+===== MVONLY-119 | article 141109936 | sent 22 | span =====
+HEADLINE: Elon Musk spends half his time talking robots and AI on Tesla earnings calls
+MAVERICK ANAPHOR at char 28: 'the car business started to suffer thank'
+
+  [18] The other Tesla executives who appear on the company's earnings calls, like chief financial officer Vaibhav Taneja and vice president of engineering Lars Moravy, have been much slower to shift their focus.
+  [19] Even on some of the most recent calls, they have spent around 30% of the time focusing on the automotive business, with their next-most common topics being AI, robotaxi, and Full Self-Driving.
+  [20] Their attention has shifted, but they are lagging behind Musk's enthusiasm for AI and robotics, most likely because those efforts aren't yet generating any real returns.
+  [21] These other Tesla executives used to spend nearly 50% of their time on these calls (or more) talking about making and selling cars.
+>>[22] That all changed in 2024 as the car business started to suffer thanks to increased competition from legacy automakers and new Chinese entrants.
+  [23] But when they do join Musk in talking up the future, they match the lofty rhetoric of their boss, the world's richest man.
+
+===== MVONLY-122 | article 141117195 | sent 149 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 46: 'its core, an automotive business.'
+
+  [145] Travis Hoium: Welcome back to Motley Fool Hidden Gems Investing .
+  [146] The first of Elon Musk's major companies reported earnings this week.
+  [147] Shares are down 18% in about the past week and are actually down 36% from their high late in 2025.
+  [148] Lou, when you looked at their results, what did you see?
+>>[149] Lou Whiteman: First of all, this is still, at its core, an automotive business.
+  [150] Automotive is looking more like an automotive business every day.
+
+===== MVONLY-123 | article 141117195 | sent 151 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 0: "They've always had absurdly high margins"
+
+  [147] Shares are down 18% in about the past week and are actually down 36% from their high late in 2025.
+  [148] Lou, when you looked at their results, what did you see?
+  [149] Lou Whiteman: First of all, this is still, at its core, an automotive business.
+  [150] Automotive is looking more like an automotive business every day.
+>>[151] They've always had absurdly high margins for a carmaker; no longer.
+  [152] Automotive margins were down to 1.4%, which, hey, you know what?
+
+===== MVONLY-125 | article 141117195 | sent 160 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 0: 'They moved 35% more metal, but the profi'
+
+  [156] On the other hand, it's really bad just to see it play out.
+  [157] It almost seems like they're in liquidation mode in the auto business.
+  [158] What happened there?
+  [159] Auto profits were up 1% despite deliveries up 35%.
+>>[160] They moved 35% more metal, but the profit only barely nudged.
+  [161] That was basically the same profit they made a quarter ago.
+
+===== MVONLY-128 | article 141117195 | sent 169 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 3: 'they underspent in the first and second '
+
+  [165] It's all these things that investors are focused on.
+  [166] I don't think anyone's really looking at the car company anymore.
+  [167] The issue here is the capex was actually under plan for the second straight quarter.
+  [168] But they held their full-year capex guidance steady.
+>>[169] If they underspent in the first and second quarter and still intend to spend what they were going to for the full year, that implies that we've only just begun.
+  [170] The ramp is only beginning, so more spending is in our future.
+
+===== MVONLY-129 | article 141117195 | sent 174 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 0: 'They had a chart in their earnings repor'
+
+  [170] The ramp is only beginning, so more spending is in our future.
+  [171] Travis Hoium: We talked about Alphabet increasing their spending, but they're using operating cash flow to do it.
+  [172] The challenge here for Tesla is they don't have the same operating cash flow to be able to fund this spending.
+  [173] Jason, the other piece that caught my eye is the robotaxi business; for years has been the future of Tesla.
+>>[174] They had a chart in their earnings report in their shareholder letter that showed the growth of miles per week is slowing.
+  [175] They are expanding to more cities, but where does that sit in your mind?
+
+===== MVONLY-130 | article 141117195 | sent 175 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 0: 'They are expanding to more cities, but w'
+
+  [171] Travis Hoium: We talked about Alphabet increasing their spending, but they're using operating cash flow to do it.
+  [172] The challenge here for Tesla is they don't have the same operating cash flow to be able to fund this spending.
+  [173] Jason, the other piece that caught my eye is the robotaxi business; for years has been the future of Tesla.
+  [174] They had a chart in their earnings report in their shareholder letter that showed the growth of miles per week is slowing.
+>>[175] They are expanding to more cities, but where does that sit in your mind?
+  [176] Jason Hall: It's an interesting conundrum.
+
+===== MVONLY-133 | article 141117195 | sent 180 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 76: "they're thinking about the technology an"
+
+  [176] Jason Hall: It's an interesting conundrum.
+  [177] They're standing up a manufacturing line for robotaxi, and at the same time, those problems are happening.
+  [178] But one thing that I did notice is that they are selling more full self-driving.
+  [179] That number jumped a ton.
+>>[180] I think you have to look at full self-driving and robotaxi combined because they're thinking about the technology and what can it accomplish.
+  [181] But at the same time, there is that slowing metric with robotaxi; they're in seven cities now.
+
+===== MVONLY-134 | article 141117195 | sent 181 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 66: "they're in seven cities now."
+
+  [177] They're standing up a manufacturing line for robotaxi, and at the same time, those problems are happening.
+  [178] But one thing that I did notice is that they are selling more full self-driving.
+  [179] That number jumped a ton.
+  [180] I think you have to look at full self-driving and robotaxi combined because they're thinking about the technology and what can it accomplish.
+>>[181] But at the same time, there is that slowing metric with robotaxi; they're in seven cities now.
+  [182] I didn't think they would be in seven cities by this point.
+
+===== MVONLY-135 | article 141117195 | sent 182 | span =====
+HEADLINE: What Alphabet’s Stock Drop Tells Us About the Market Today
+MAVERICK ANAPHOR at char 15: 'they would be in seven cities by this po'
+
+  [178] But one thing that I did notice is that they are selling more full self-driving.
+  [179] That number jumped a ton.
+  [180] I think you have to look at full self-driving and robotaxi combined because they're thinking about the technology and what can it accomplish.
+  [181] But at the same time, there is that slowing metric with robotaxi; they're in seven cities now.
+>>[182] I didn't think they would be in seven cities by this point.
+  [183] I do think that the risk to start building standalone robotaxis is a risk that the business absolutely has to take.
+
+===== MVONLY-144 | article 141122355 | sent 258 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [254] Travis Axelrod: Elon, you may be on mute right now.
+  [255] Elon Musk: Sorry, yes, our suppliers have been great, and they've made -- they have made and are making tremendous investments in support of Optimus and robotaxi and whatnot.
+  [256] Samsung and TSMC, in particular, are building fabs at TSMC in Arizona and Samsung in Texas and putting in tens of billions of dollars for -- to build AI compute for Optimus and robotaxi.
+  [257] Panasonic has also invested many billions in increasing battery cell production.
+>>[258] I'm a little under the weather here.
+  [259] So I sound a little kind of struggling with some a little bit today.
+
+===== MVONLY-145 | article 141122355 | sent 259 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [255] Elon Musk: Sorry, yes, our suppliers have been great, and they've made -- they have made and are making tremendous investments in support of Optimus and robotaxi and whatnot.
+  [256] Samsung and TSMC, in particular, are building fabs at TSMC in Arizona and Samsung in Texas and putting in tens of billions of dollars for -- to build AI compute for Optimus and robotaxi.
+  [257] Panasonic has also invested many billions in increasing battery cell production.
+  [258] I'm a little under the weather here.
+>>[259] So I sound a little kind of struggling with some a little bit today.
+  [260] So, yes, but our partners have been great.
+
+===== MVONLY-148 | article 141122355 | sent 276 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [272] Really appreciate that color.
+  [273] And maybe just my follow-up on robotaxis.
+  [274] You guys gave a lot of great information in your prepared remarks.
+  [275] But there seems to be some evolving regulations at the state level, potentially around sensor requirements.
+>>[276] So, I'm just curious, as you think about your own rollout, what do you want to see or what do you need to see from regulators to make sure that, obviously, some regulation might be good, but you don't want it to be overregulated.
+  [277] So what are you expecting to see?
+
+===== MVONLY-150 | article 141122355 | sent 278 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [274] You guys gave a lot of great information in your prepared remarks.
+  [275] But there seems to be some evolving regulations at the state level, potentially around sensor requirements.
+  [276] So, I'm just curious, as you think about your own rollout, what do you want to see or what do you need to see from regulators to make sure that, obviously, some regulation might be good, but you don't want it to be overregulated.
+  [277] So what are you expecting to see?
+>>[278] What do you want to see to make sure that this is done in a proper way?
+  [279] And we've got Lars on the line.
+
+===== MVONLY-152 | article 141122355 | sent 285 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [281] I mean, I think when we talk about regulation, particularly in the U.S., we've made a lot of headway just good initiatives from the federal government in terms of the FMVSS rules, moving towards acceptance and adoption of purely built AVs, and I really appreciate the support from NHTSA on that.
+  [282] When it comes to like a state-to-state level, obviously, the stuff in New Jersey is a little bit disheartening.
+  [283] I think ultimately, as Ashok said in his opening remarks, we really focus on the performance of the vehicle.
+  [284] And ultimately, that's what's going to drive regulators and the public to adopt it.
+>>[285] I think the best regulations are those that provide companies and innovators with a goal or a task and allow us to figure out the solution.
+  [286] And when we see regulations that provide a solution before identifying the problem, we really don't appreciate those.
+
+===== MVONLY-154 | article 141122355 | sent 297 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [293] Next is Alex from Bank of America.
+  [294] Alexander Perry: Just a few follow-ups on robotaxi actually.
+  [295] I guess what milestones should investors be watching from here that would cause you to accelerate your fleet scaling or market deployments?
+  [296] Is it the further safety validation like a miles driven per incident or something else?
+>>[297] And then would you ever consider third-party distribution partnerships such as with rideshare providers to increase utilization?
+  [298] Or is the plan for now to keep robotaxi fully vertically integrated?
+
+===== MVONLY-155 | article 141122355 | sent 345 | no-span =====
+HEADLINE: Tesla (TSLA) Q2 2026 Earnings Call Transcript
+
+  [341] And when you go through that experience, I mean, soon, customers will be able to do it in not-too-distant future, and then you'll understand why that connectivity becomes so important.
+  [342] Travis Axelrod: Great.
+  [343] And then, Colin, do you have a follow-up?
+  [344] Just if I follow up on robotaxi.
+>>[345] If I look at the launches, it's been -- you've been adding cities, but the number of units is still -- it looks like based on media reports, sort of in the dozens as opposed to hundreds.
+  [346] Why not just sort of scale up Austin or one or two cities before adding cities?
+
+===== MVONLY-164 | article 141140363 | sent 10 | no-span =====
+HEADLINE: SpaceX Q2 Tesla Megapack purchases: $295 million for AI data centers
+
+  [6] SpaceX and Tesla are both controlled by Elon Musk, who serves as chief executive of each company.
+  [7] The SEC filing discloses the transactions as related-party dealings.
+  [8] SpaceX said it recorded the Megapack purchases in property, plant, and equipment on its balance sheet.
+  [9] Megapacks are containerized, utility-scale battery systems.
+>>[10] According to TechCrunch , the batteries play a role in AI data centers that goes beyond simple backup power — because AI workloads draw electricity unevenly, the batteries absorb demand spikes that would otherwise trigger costly utility charges or strain on-site generation equipment.
+  [11] SpaceX's AI data centers have also relied on natural gas turbines for power generation.
+
+===== MVONLY-166 | article 141144631 | sent 2 | no-span =====
+HEADLINE: ‘Shark Tank’ Judge Kevin O’Leary Passed On SpaceX IPO, But May Buy Soon: ‘The Bigger Opportunity Is…’
+
+  [0] Advertisement | Remove ads.
+  [1] Advertisement | Remove ads.
+>>[2] “Shark Tank” judge and financial commentator Kevin O’Leary said he may begin buying SpaceX shares once the stock’s post-IPO volatility settles, despite declining his original allocation over liquidity concerns, as he sees greater long-term value in CEO Elon Musk potentially bringing his tech businesses together.
+  [3] O’Leary said on X that SpaceX cannot be judged like a conventional company based on one quarter.

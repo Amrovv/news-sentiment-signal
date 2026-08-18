@@ -242,6 +242,33 @@ USE_COREF = True
 # keyed by a hash of the exact string coref saw and reused across runs.
 COREF_CACHE_PATH = INTERIM_DATA_DIR / "coref_cache.parquet"
 
+# --- Coreference referent verification (coref_eval.py) ---
+# The hand-labelled ground truth for "did coref resolve this anaphor to the
+# right company". 270 rows (100 with an anaphor span, 170 without), built and
+# documented in notebook 2.7. It is the ONLY thing a candidate verification
+# judge is measured against -- two earlier attempts were argued into the
+# pipeline without being measured and both failed, so this file is load-bearing.
+EVAL_DATA_DIR = DATA_DIR / "eval"
+COREF_EVAL_PATH = EVAL_DATA_DIR / "coref_eval_labelled.parquet"
+# Verdict cache for referent-verification judges, keyed on
+# (article_id, sent_idx, target, model_id, prompt_version). prompt_version is in
+# the key deliberately: editing a prompt must invalidate its verdicts rather
+# than silently reuse answers formed under the old wording.
+COREF_JUDGE_CACHE_PATH = INTERIM_DATA_DIR / "coref_judge_cache.parquet"
+# The context window the human labellers actually read, in sentences either side
+# of the one being judged. A judge shown less than this is being asked a harder
+# question than the labels answer, so these are a convention to match, not a
+# hyperparameter to tune.
+EVAL_CONTEXT_PRECEDING = 4
+EVAL_CONTEXT_FOLLOWING = 1
+# The local instruct model that acts as the referent-verification judge.
+# Qwen2.5-7B-Instruct at 4-bit (Q4_K_M, ~4.7GB) runs on CPU on this machine in
+# ~16GB RAM; torch here is 2.13.0+cpu with no CUDA, and llama-cpp-python is
+# deliberately used instead of transformers because it is independent of torch
+# and cannot drag a different build in underneath FinBERT/ABSA/fastcoref.
+# Not tracked in git (models/ is gitignored); see notebook 2.7 §11 for the fetch.
+JUDGE_MODEL_PATH = MODELS_DIR / "gguf" / "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+
 # --- Sentiment scoring (Goal 3) ---
 FINBERT_MODEL = "ProsusAI/finbert"
 MAX_TOKENS = 512
