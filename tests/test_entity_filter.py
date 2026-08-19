@@ -141,25 +141,6 @@ def test_sentence_initial_it_resolves_but_midsentence_it_does_not():
     assert df.iloc[2]["resolved_by_anaphora"] == False
 
 
-def test_derived_compat_views_match_registry():
-    # ALIASES / OTHER_COMPANIES are deprecated views derived from COMPANIES,
-    # kept only so notebook 2.0 stays re-runnable.
-    from stock_predictor.config import ALIASES, COMPANIES, OTHER_COMPANIES
-
-    assert ALIASES["TSLA"]["unambiguous"] == COMPANIES["TSLA"]["names"]
-    assert ALIASES["TSLA"]["person"] == COMPANIES["TSLA"]["person"]
-    assert ALIASES["TSLA"]["anaphoric"] == COMPANIES["TSLA"]["descriptors"]
-
-    # Every registry entry is present in both views (no entry is omitted).
-    assert set(ALIASES) == set(COMPANIES)
-    assert set(OTHER_COMPANIES) == set(COMPANIES)
-    for key, entry in COMPANIES.items():
-        assert OTHER_COMPANIES[key] == entry.get("names", [])
-        assert ALIASES[key]["unambiguous"] == entry.get("names", [])
-        assert ALIASES[key]["person"] == entry.get("person", [])
-        assert ALIASES[key]["anaphoric"] == entry.get("descriptors", [])
-
-
 def test_flag_boilerplate():
     # Exact sentence text repeated across >= BOILERPLATE_MIN_ARTICLES distinct
     # articles is corpus boilerplate; repeated across fewer is not.

@@ -37,7 +37,8 @@ Design notes (see module-level docstrings below for detail):
     time rather than assumed -- see _build_label_index_map().
   * All three raw probabilities (pos, neg, neu) are stored everywhere; no
     single collapsed score is persisted anywhere in this module -- WITH ONE
-    NAMED EXCEPTION. The fus_conf_graft_* / fus_conf_graft_soft_* columns
+    NAMED EXCEPTION. The fus_conf_graft_* / fus_conf_graft_soft_* /
+    fus_conf_graft_floor_* columns
     (see FUSION_FEATURE_COLUMNS and the FUSION block in
     aggregate_article_features()) ARE signed scalars, not pos/neg/neu
     probability triples: they come from stock_predictor.text.fusion, which by
@@ -85,7 +86,8 @@ ABSA_FEATURE_COLUMNS = [
 ]
 
 # Article-level columns fusion.aggregate_fusion_features() derives from the
-# conf_graft / conf_graft_soft fusion variants -- see the FUSION block in
+# conf_graft / conf_graft_soft / conf_graft_floor fusion variants (the last
+# is the shipped scoring, see fusion.CONF_FLOOR) -- see the FUSION block in
 # aggregate_article_features() below and fusion.aggregate_fusion_features()'s
 # own docstring for the full reasoning (population, the six aggregations,
 # why top3 exists, why K stays at 3, and the measured cases behind median and
@@ -514,8 +516,9 @@ def aggregate_article_features(
         column changes in name, semantics or value because of them. If the
         absa score columns are absent the whole family is NaN and one warning
         is logged — the pipeline works with ABSA off.
-      * fus_*: article-level aggregates of the conf_graft / conf_graft_soft
-        fusion variants (stock_predictor.text.fusion), computed by
+      * fus_*: article-level aggregates of the conf_graft / conf_graft_soft /
+        conf_graft_floor fusion variants (stock_predictor.text.fusion),
+        conf_graft_floor being the shipped scoring; computed by
         fusion.aggregate_fusion_features() and merged in here rather than
         inlined in this loop -- fusion.py owns the fusion logic, this module
         only wires it into the article feature table. Same soft feature-detect

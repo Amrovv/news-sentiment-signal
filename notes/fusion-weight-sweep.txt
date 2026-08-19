@@ -1,0 +1,32 @@
+# FinBERT/ABSA magnitude-weight sweep vs 2,500 hand-audit labels
+# Generated 2026-08-19. Formula: sign(absa) * |fin| * (w + (1-w)*|absa|)
+# w=0 == conf_graft (LIVE), w=0.5 == conf_graft_soft, w=1 == sign_graft
+# Labels: data/eval/full_audit_0{1,3,4,5,7}_labelled.parquet (sheets 02/06 excluded, divergent benign rule)
+
+=== absa_neu by verdict (is it the discriminator?) ===
+                n  mean_neu  med_neu  frac_neu_gt70  mean_aabsa
+verdict                                                        
+benign        155    0.7825   0.8949         0.7548      0.1816
+correct      2188    0.6366   0.7643         0.5503      0.3267
+harmful        34    0.4344   0.4326         0.1765      0.4897
+implausible    95    0.3464   0.3665         0.0842      0.5777
+minor          28    0.6315   0.7575         0.5357      0.2667
+
+=== mass share pct by verdict ===
+scheme                        correct     benign      minorimplausible    harmful      SNR  mean|cg|
+w=0 (conf_graft, LIVE)          87.39       1.72       0.32       8.33       2.24    6.931   0.2009
+flat floor w=0.50               87.81       2.92       0.89       6.41       1.98    7.201   0.3596
+flat floor w=0.70               87.89       3.14       0.99       6.05       1.93    7.254   0.4231
+flat floor w=1.00               87.97       3.38       1.11       5.67       1.88    7.311   0.5183
+neu-gated w=0.7 neu<0.5         86.74       1.61       0.32       8.79       2.53    6.542   0.2372
+neu-gated w=0.7 neu<0.6         86.16       1.77       0.31       9.31       2.44    6.224   0.2509
+neu-gated w=0.7 neu<0.7         86.29       1.72       0.37       8.98       2.64    6.295   0.2686
+neu-gated w=0.7 neu<0.8         86.41       1.90       0.55       8.52       2.62    6.359   0.2951
+smooth w=0.7*(1-absa_neu)       86.84       1.93       0.51       8.33       2.38    6.600   0.2555
+smooth w=1.0*(1-absa_neu)       86.67       2.00       0.57       8.34       2.42    6.504   0.2790
+
+=== benign silencing check: frac of off-target rows kept under |cg|<0.05 ===
+w=0 LIVE                   benign<0.05: 0.83   mean|cg| benign: 0.0557   mean|cg| correct: 0.2006
+flat w=0.7                 benign<0.05: 0.43   mean|cg| benign: 0.2145   mean|cg| correct: 0.4248
+neu-gated w=0.7 neu<0.7    benign<0.05: 0.78   mean|cg| benign: 0.0745   mean|cg| correct: 0.2649
+smooth w=0.7*(1-neu)       benign<0.05: 0.68   mean|cg| benign: 0.0796   mean|cg| correct: 0.2536

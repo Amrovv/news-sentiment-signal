@@ -121,6 +121,54 @@ from stock_predictor.config import LEAD_SENTENCE_WINDOW
 # 0.10 to 0.0.
 DEADBAND = 0.0
 
+# Confidence FLOOR for the conf_graft family. All three conf-graft variants
+# are one formula with one parameter:
+#
+#     sign(absa) * abs(fin) * (floor + (1 - floor) * abs(absa))
+#
+# floor == 0.0 is conf_graft (ABSA's confidence scales the FinBERT magnitude
+# all the way to zero), floor == 0.5 is conf_graft_soft, floor == 1.0 is
+# sign_graft (ABSA's confidence ignored entirely, FinBERT magnitude kept in
+# full). CONF_FLOOR names the value the pipeline SHIPS, currently 0.7.
+#
+# WHY 0.7, MEASURED. Against 2,500 hand-labelled sentences (the clean subset
+# of the full-corpus score audit -- data/eval/full_audit_0{1,3,4,5,7}, see
+# notes/fusion-weight-sweep.txt for the run that produced this table), the
+# audit's own error categories move like this as the floor rises:
+#
+#   floor | mean|score| | implausible % of | harmful % of | correct-mass /
+#         |             | total sent. mass | total mass   | error-mass (SNR)
+#   ------|-------------|------------------|--------------|-----------------
+#   0.00  |    0.201    |       8.33       |     2.24     |      6.931
+#   0.50  |    0.360    |       6.41       |     1.98     |      7.201
+#   0.70  |    0.423    |       6.05       |     1.93     |      7.254
+#   1.00  |    0.518    |       5.67       |     1.88     |      7.311
+#
+# The direction is counter-intuitive and worth recording: raising the floor
+# does NOT amplify the errors. It cannot change any sign (no variant in this
+# family does), and the rows the audit marked wrong ALREADY sit near full
+# magnitude -- mean |absa| is 0.578 on `implausible` rows and 0.490 on
+# `harmful` rows, against only 0.327 on `correct` ones. ABSA is more
+# confident on the rows it gets wrong than on the rows it gets right, so the
+# confidence multiplier at floor == 0 was cutting the CORRECT rows hardest.
+# Raising the floor hands most of the restored magnitude to them.
+#
+# THE COST, also measured. Off-target rows are the quietest of all (mean
+# |absa| 0.182), so they gain the most in relative terms: the share of
+# `benign` rows held under |score| < 0.05 falls from 0.83 at floor 0.0 to
+# 0.43 at floor 0.7. Publisher boilerplate and off-referent text that ABSA
+# was silencing by accident becomes audible. That is a real regression and
+# the reason this is 0.7 rather than 1.0 -- and the publisher-boilerplate
+# blocklist (still unbuilt) is the principled fix for it, not a lower floor.
+#
+# REJECTED ALTERNATIVE. Gating the floor on absa_neu -- applying it only
+# where ABSA says the sentence IS about the aspect -- keeps `benign` rows
+# silenced (0.78 under 0.05) but drops SNR to 6.30, WORSE than doing
+# nothing, because `implausible` rows carry the LOWEST absa_neu of any
+# category (0.346). Any "trust ABSA when it is confident" rule amplifies
+# precisely the errors. Do not re-derive this; see the sweep file.
+CONF_FLOOR = 0.7
+
 # One column name per fusion candidate. score_variants() returns exactly
 # these columns, in this order, named exactly as listed here.
 VARIANTS = (
@@ -130,6 +178,7 @@ VARIANTS = (
     "sign_graft",
     "conf_graft",
     "conf_graft_soft",
+    "conf_graft_floor",
     "gated",
     "agree_only",
 )
@@ -277,6 +326,21 @@ def score_variants(sentences_df: pd.DataFrame, deadband: float = DEADBAND) -> pd
     conf_graft = absa * fin.abs()
     conf_graft_soft = absa_sign * fin.abs() * (0.5 + 0.5 * absa.abs())
 
+    # conf_graft_floor: the SHIPPING variant. Same family as the two above,
+    # with the confidence floor read from CONF_FLOOR (0.7) rather than
+    # hardcoded -- see CONF_FLOOR's comment for the measured table behind
+    # that value and for the off-target cost it buys. conf_graft (floor 0)
+    # and conf_graft_soft (floor 0.5) are kept unchanged beside it so the
+    # earlier measurements they back stay reproducible; this variant does not
+    # redefine either.
+    #
+    # NaN handling matches conf_graft_soft exactly and for the same reason:
+    # np.sign(np.nan) IS nan (not 0 or 1), so a NaN absa poisons the product
+    # and no `.where()` guard is needed. Pinned by test, not just asserted.
+    conf_graft_floor = (
+        absa_sign * fin.abs() * (CONF_FLOOR + (1.0 - CONF_FLOOR) * absa.abs())
+    )
+
     # gated: FinBERT's magnitude, faded out by ABSA's own confidence that the
     # sentence expresses sentiment about the aspect AT ALL (1 - absa_neu).
     # This is the most principled variant here because it does not merely
@@ -315,6 +379,7 @@ def score_variants(sentences_df: pd.DataFrame, deadband: float = DEADBAND) -> pd
             "sign_graft": sign_graft,
             "conf_graft": conf_graft,
             "conf_graft_soft": conf_graft_soft,
+            "conf_graft_floor": conf_graft_floor,
             "gated": gated,
             "agree_only": agree_only,
         },
@@ -333,7 +398,14 @@ def score_variants(sentences_df: pd.DataFrame, deadband: float = DEADBAND) -> pd
 # candidates, not yet promoted) has that evidence behind it. Promoting only
 # these two keeps the article-level feature table from ballooning with
 # columns nobody has validated yet.
-AGGREGATED_VARIANTS = ("conf_graft", "conf_graft_soft")
+#
+# conf_graft_floor joins them as the SHIPPING variant (CONF_FLOOR == 0.7);
+# it is promoted on the strength of the 2,500-row hand audit tabulated in
+# CONF_FLOOR's comment. conf_graft and conf_graft_soft stay promoted beside
+# it so the article-level features backing every earlier measurement remain
+# computable from the same call -- switching the shipped scoring must not
+# silently invalidate the record it was chosen against.
+AGGREGATED_VARIANTS = ("conf_graft", "conf_graft_soft", "conf_graft_floor")
 
 # One "_mean"/"_median"/"_lead"/"_top3_pos"/"_top3_neg"/"_spread" suffix per
 # aggregated variant. See aggregate_fusion_features()'s docstring for the

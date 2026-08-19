@@ -558,16 +558,20 @@ def test_aggregate_article_features_includes_fusion_columns():
     df = pd.DataFrame(rows)
     result = aggregate_article_features(df)
 
-    assert len(FUSION_FEATURE_COLUMNS) == 12
+    # 3 promoted variants x 6 aggregations. conf_graft_floor joined
+    # conf_graft and conf_graft_soft when CONF_FLOOR became the shipped
+    # scoring; the older two stay promoted so earlier measurements remain
+    # reproducible from the same call.
+    assert len(FUSION_FEATURE_COLUMNS) == 18
     for col in FUSION_FEATURE_COLUMNS:
         assert col in result.columns
 
     row = result.iloc[0]
     # Population is non-empty (2 target, non-boilerplate sentences with real
     # scores), so these should be real numbers, not NaN -- check all six
-    # aggregations for both promoted variants, not just _mean, so this test
-    # actually exercises the full 12-column list rather than a fraction of it.
-    for variant in ("conf_graft", "conf_graft_soft"):
+    # aggregations for every promoted variant, not just _mean, so this test
+    # actually exercises the full 18-column list rather than a fraction of it.
+    for variant in ("conf_graft", "conf_graft_soft", "conf_graft_floor"):
         for agg in ("mean", "median", "lead", "top3_pos", "top3_neg", "spread"):
             assert not pd.isna(row[f"fus_{variant}_{agg}"])
 
@@ -583,7 +587,7 @@ def test_aggregate_article_features_fusion_nan_when_absa_absent():
     df = pd.DataFrame(rows)
     result = aggregate_article_features(df)
 
-    assert len(FUSION_FEATURE_COLUMNS) == 12
+    assert len(FUSION_FEATURE_COLUMNS) == 18
     for col in FUSION_FEATURE_COLUMNS:
         assert col in result.columns
         assert pd.isna(result.iloc[0][col])

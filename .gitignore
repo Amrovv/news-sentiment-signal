@@ -218,3 +218,15 @@ data/processed/processed_articles_best.parquet
 # Local model weights -- multi-GB GGUF/checkpoint files, fetched not authored.
 # JUDGE_MODEL_PATH points here; notebook 2.7 records how to re-fetch.
 models/
+
+# Interim pipeline artifacts in subdirectories (data/interim/*.parquet above
+# does not match nested paths such as data/interim/full_run/).
+data/interim/**/*.parquet
+
+# Generated hand-audit sheets. ~4 MB of plain text, rebuilt from the corpus by
+# notes/stage4-scripts/. The LABELS derived from them are committed under
+# data/eval/ and are the part that cannot be regenerated.
+notes/full_*.txt
+notes/audit_*.txt
+notes/impact_*.txt
+notes/stage4b_mvonly_sheet.txt

@@ -5,6 +5,7 @@ import pytest
 from stock_predictor.config import LEAD_SENTENCE_WINDOW
 from stock_predictor.text.fusion import (
     AGGREGATED_VARIANTS,
+    CONF_FLOOR,
     DEADBAND,
     FUSION_AGGREGATIONS,
     PROVENANCE_CHANNELS,
@@ -208,6 +209,92 @@ def test_conf_graft_soft_hand_computed():
     )
     out = score_variants(df)
     assert out["conf_graft_soft"].iloc[0] == pytest.approx(0.6)
+
+
+def test_conf_graft_floor_hand_computed():
+    # fin = 0.9 - 0.1 = 0.8, absa = 0.7 - 0.2 = 0.5.
+    # conf_graft_floor = sign(absa) * |fin| * (CONF_FLOOR + (1 - CONF_FLOOR) * |absa|)
+    #                  = 1 * 0.8 * (0.7 + 0.3 * 0.5) = 0.8 * 0.85 = 0.68
+    df = _frame(
+        [{"pos": 0.9, "neg": 0.1, "neu": 0.0, "absa_pos": 0.7, "absa_neg": 0.2, "absa_neu": 0.1}]
+    )
+    out = score_variants(df)
+    assert out["conf_graft_floor"].iloc[0] == pytest.approx(0.68)
+
+
+def test_conf_floor_is_the_shipped_value():
+    # The measured table in CONF_FLOOR's comment is what justifies 0.7. If
+    # this value is changed, that table no longer describes what ships --
+    # this test exists so the change cannot pass silently.
+    assert CONF_FLOOR == 0.7
+
+
+def test_conf_graft_floor_interpolates_conf_graft_and_sign_graft():
+    # The whole family is one formula in one parameter. At floor 0 it must
+    # reproduce conf_graft exactly; at floor 1, sign_graft. Pinning the two
+    # endpoints pins the parameterisation itself, so a future floor change
+    # cannot quietly become a different formula.
+    rows = [
+        {"pos": 0.9, "neg": 0.1, "neu": 0.0, "absa_pos": 0.7, "absa_neg": 0.2, "absa_neu": 0.1},
+        {"pos": 0.2, "neg": 0.6, "neu": 0.2, "absa_pos": 0.1, "absa_neg": 0.8, "absa_neu": 0.1},
+        {"pos": 0.4, "neg": 0.4, "neu": 0.2, "absa_pos": 0.5, "absa_neg": 0.1, "absa_neu": 0.4},
+    ]
+    out = score_variants(_frame(rows))
+    fin = out["fin"].abs()
+    absa = out["absa"]
+    at_zero = np.sign(absa) * fin * (0.0 + 1.0 * absa.abs())
+    at_one = np.sign(absa) * fin * (1.0 + 0.0 * absa.abs())
+    pd.testing.assert_series_equal(at_zero, out["conf_graft"], check_names=False)
+    pd.testing.assert_series_equal(at_one, out["sign_graft"], check_names=False)
+
+
+def test_conf_graft_floor_never_shrinks_magnitude_below_conf_graft():
+    # The floor exists to stop a hesitant ABSA call crushing a confident
+    # FinBERT magnitude. Since 0 <= |absa| <= 1 and CONF_FLOOR > 0, the
+    # floored variant must be at least as loud as conf_graft on EVERY row,
+    # and strictly louder wherever |absa| < 1. This is the property the
+    # 2,500-row audit was measuring; pin it so it cannot regress.
+    rows = [
+        {"pos": 0.9, "neg": 0.1, "neu": 0.0, "absa_pos": 0.7, "absa_neg": 0.2, "absa_neu": 0.1},
+        {"pos": 0.2, "neg": 0.6, "neu": 0.2, "absa_pos": 0.1, "absa_neg": 0.8, "absa_neu": 0.1},
+        {"pos": 0.5, "neg": 0.4, "neu": 0.1, "absa_pos": 0.30, "absa_neg": 0.28, "absa_neu": 0.42},
+    ]
+    out = score_variants(_frame(rows))
+    assert (out["conf_graft_floor"].abs() >= out["conf_graft"].abs() - 1e-12).all()
+    hesitant = out["absa"].abs() < 1.0
+    assert (
+        out.loc[hesitant, "conf_graft_floor"].abs() > out.loc[hesitant, "conf_graft"].abs()
+    ).all()
+
+
+def test_conf_graft_floor_preserves_absa_sign_and_propagates_nan():
+    # Same two guarantees the other grafts carry. The sign guarantee is what
+    # makes the floor safe to raise at all -- no floor value can flip a row's
+    # direction, so the audit's referent verdicts stay valid across floors.
+    # NaN: np.sign(np.nan) is nan, so the product poisons with no .where()
+    # guard, exactly as for conf_graft_soft.
+    rows = [
+        {"pos": 0.9, "neg": 0.1, "neu": 0.0, "absa_pos": 0.1, "absa_neg": 0.8, "absa_neu": 0.1},
+        {"pos": 0.1, "neg": 0.8, "neu": 0.1, "absa_pos": 0.7, "absa_neg": 0.2, "absa_neu": 0.1},
+        {"pos": np.nan, "neg": 0.1, "neu": 0.0, "absa_pos": 0.7, "absa_neg": 0.2, "absa_neu": 0.1},
+        {"pos": 0.9, "neg": 0.1, "neu": 0.0, "absa_pos": np.nan, "absa_neg": 0.2, "absa_neu": 0.1},
+    ]
+    out = score_variants(_frame(rows))
+    # Row 0: FinBERT positive, ABSA negative -> ABSA's sign must win.
+    assert out["conf_graft_floor"].iloc[0] < 0
+    # Row 1: FinBERT negative, ABSA positive -> ABSA's sign must win.
+    assert out["conf_graft_floor"].iloc[1] > 0
+    assert np.isnan(out["conf_graft_floor"].iloc[2])
+    assert np.isnan(out["conf_graft_floor"].iloc[3])
+
+
+def test_conf_graft_floor_is_aggregated_but_does_not_displace_the_others():
+    # Switching the shipped scoring must not invalidate the record it was
+    # chosen against: the article-level features backing every earlier
+    # measurement have to stay computable from the same call.
+    assert "conf_graft_floor" in AGGREGATED_VARIANTS
+    assert "conf_graft" in AGGREGATED_VARIANTS
+    assert "conf_graft_soft" in AGGREGATED_VARIANTS
 
 
 def test_conf_graft_equals_sign_graft_scaled_by_absa_confidence():

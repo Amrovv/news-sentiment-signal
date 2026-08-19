@@ -175,23 +175,13 @@ GENERIC_ANAPHORA = ["the company", "the firm"]
 # Images.", inquiry auto-replies) and excluded from sentiment aggregates.
 BOILERPLATE_MIN_ARTICLES = 5
 
-# DEPRECATED — derived views over COMPANIES, kept only so notebook 2.0
-# (which imports ALIASES / OTHER_COMPANIES / GENERIC_ANAPHORA) stays
-# re-runnable. New code must use COMPANIES directly; these will be removed
-# once the notebook is updated.
-ALIASES = {
-    key: {
-        "unambiguous": entry.get("names", []),
-        "person": entry.get("person", []),
-        "anaphoric": entry.get("descriptors", []),
-    }
-    for key, entry in COMPANIES.items()
-}
-
-# DEPRECATED — derived from COMPANIES (every entry; the target is excluded at
-# runtime by key, not by omission from this dict). Kept only for notebook 2.0
-# compatibility; new code must use COMPANIES.
-OTHER_COMPANIES = {key: entry.get("names", []) for key, entry in COMPANIES.items()}
+# REMOVED 2026-08-19: the ALIASES / OTHER_COMPANIES shims. They were derived
+# views over COMPANIES, kept for one reason only -- so notebook 2.0 stayed
+# re-runnable. That notebook was merged into 2.0-aw-entity-sentiment-pipeline
+# and the cell that imported them was cut, so the reason is gone. The old
+# target-relative split (ALIASES = potential targets, OTHER_COMPANIES = a "them"
+# list curated from the TSLA corpus) is described in notes/removed-mechanisms.md
+# section 7. Use COMPANIES directly.
 
 # News window (Finnhub free tier ~1yr back — confirm on first pull)
 NEWS_START_DATE = "2025-08-01"
@@ -208,8 +198,14 @@ SPACY_PIPE_BATCH_SIZE = 50
 # company mention -- without a decay window, "the company"/"it" late in a long
 # full-body article keeps resolving to whatever was named many paragraphs
 # earlier, even after the topic has drifted to unrelated content (author bios,
-# boilerplate, tangential discussion). See notebooks/a_entity_sentiment.ipynb
-# section 4.3 for the hand-checked accuracy delta this produced.
+# boilerplate, tangential discussion). See notebooks/text/2.0-aw-entity-sentiment
+# .ipynb section 1.4 for the hand-checked accuracy delta this produced (40% ->
+# 60%, with the Lucid article 139579101 walk-through).
+#
+# DORMANT. This constant is only read by resolve_anaphora(), which is unreachable
+# while USE_ANAPHORA_FALLBACK is False -- see that flag below for the audit that
+# turned it off. The value is kept, not tuned: re-enabling the heuristic without
+# re-deriving the window would be worse than either choice made deliberately.
 ANAPHORA_MAX_GAP = 6
 
 # --- Coreference resolution (replacement for the anaphora heuristic) ---
