@@ -1,0 +1,201 @@
+sample_id,referent,refers_to_tesla,substitution_span_ok,note
+coref-141078954-2,Tesla stock (TSLA),TRUE,TRUE,
+coref-137266458-20,Tesla,TRUE,TRUE,
+coref-139908240-16,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140059715-6,Tesla,TRUE,TRUE,
+coref-141074957-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137258403-16,Tesla,TRUE,TRUE,
+coref-137228481-5,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140476858-29,Figure AI,FALSE,TRUE,refers to a different company
+coref-137258402-37,Tesla,TRUE,TRUE,
+coref-136913567-17,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139235358-51,Tesla,TRUE,TRUE,
+coref-136575290-1,Tesla,TRUE,TRUE,
+coref-140438083-15,Tesla,TRUE,TRUE,
+coref-139564934-4,Tesla,TRUE,TRUE,
+coref-138295575-36,Tesla,TRUE,FALSE,subject-verb disagreement
+coref-137228487-7,Tesla,TRUE,TRUE,
+coref-139908240-83,Tesla,TRUE,TRUE,
+coref-138290183-16,Tesla,TRUE,TRUE,
+coref-141134037-30,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-136478886-28,Tesla stock (TSLA),TRUE,TRUE,
+coref-140734535-16,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137601489-35,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137268657-5,Tesla,TRUE,TRUE,
+coref-138295575-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139923160-47,Tesla stock (TSLA),TRUE,TRUE,
+coref-139598228-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139907972-29,ambiguous,AMBIGUOUS,TRUE,antecedent outside context window
+coref-139566427-7,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138421135-21,Tesla,TRUE,TRUE,
+coref-136575289-13,Tesla,TRUE,TRUE,
+coref-140438004-2,Tesla stock (TSLA),TRUE,TRUE,
+coref-137611218-1,Tesla,TRUE,TRUE,
+coref-138295580-2,Tesla,TRUE,TRUE,
+coref-136888227-3,Tesla,TRUE,TRUE,
+coref-137268657-11,Tesla,TRUE,TRUE,
+coref-139190932-15,Tesla,TRUE,TRUE,
+coref-139588664-12,Tesla,TRUE,TRUE,
+coref-138295573-11,Tesla,TRUE,TRUE,
+coref-136904016-20,Tesla,TRUE,TRUE,
+coref-141083688-4,Tesla,TRUE,TRUE,
+coref-141058326-1,Tesla,TRUE,TRUE,
+coref-139190234-3,Tesla,TRUE,TRUE,
+coref-141103169-174,Tractor Supply Company (the Petsense owner),FALSE,TRUE,refers to a different company
+coref-141134037-27,Tesla,TRUE,TRUE,
+coref-138300031-6,Tesla,TRUE,TRUE,
+coref-138300033-18,Tesla,TRUE,TRUE,
+coref-141109941-66,Tesla,TRUE,TRUE,
+coref-138411883-17,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137228485-17,Tesla,TRUE,TRUE,
+coref-141068222-14,Alphabet and Tesla jointly,FALSE,FALSE,plural referent - refers to two companies
+coref-140450593-23,SpaceX,FALSE,TRUE,refers to a different company
+coref-136568948-3,Tesla,TRUE,TRUE,
+coref-139579137-11,Tesla,TRUE,TRUE,
+coref-141109939-33,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137884563-9,Tesla stock (TSLA),TRUE,TRUE,
+coref-140456326-40,Tesla,TRUE,TRUE,
+coref-141104222-8,Tesla,TRUE,TRUE,
+coref-137247804-12,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141122355-374,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139205230-3,Tesla,TRUE,TRUE,
+coref-139559806-1,Tesla,TRUE,TRUE,
+coref-141108551-18,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138290185-16,Tesla,TRUE,TRUE,
+coref-136502639-11,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140465726-10,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139581421-45,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137243232-11,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141122355-89,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138404396-2,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140085035-13,Tesla,TRUE,TRUE,
+coref-141058396-119,Tesla,TRUE,TRUE,
+coref-136890593-3,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-136579570-3,Tesla,TRUE,TRUE,
+coref-138308816-6,Tesla,TRUE,TRUE,
+coref-139201535-12,Tesla,TRUE,TRUE,
+coref-137215871-9,Tesla,TRUE,TRUE,
+coref-141042485-12,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140735247-20,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139909134-90,Tesla stock (TSLA),TRUE,TRUE,
+coref-137649794-13,Tesla,TRUE,TRUE,
+coref-137601486-9,Tesla,TRUE,TRUE,
+coref-140761551-7,Tesla,TRUE,TRUE,
+coref-140113423-2,Tesla,TRUE,TRUE,
+coref-139923160-48,Tesla stock (TSLA),TRUE,TRUE,
+coref-139902987-13,Tesla,TRUE,TRUE,
+coref-136892565-13,Tesla stock (TSLA),TRUE,TRUE,
+coref-141135352-22,Tesla stock (TSLA),TRUE,TRUE,
+coref-137228479-7,Tesla stock (TSLA),TRUE,TRUE,
+coref-141056844-5,Tesla stock (TSLA),TRUE,TRUE,
+coref-141063481-4,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141109941-22,Tesla,TRUE,TRUE,
+coref-138307221-18,Tesla,TRUE,TRUE,
+coref-136915583-15,Tesla,TRUE,TRUE,
+coref-137649794-9,Tesla,TRUE,TRUE,
+coref-141098894-12,Tesla,TRUE,TRUE,
+coref-139903988-27,Tesla,TRUE,TRUE,
+coref-137884562-23,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137230896-4,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141122355-375,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140440623-21,Tesla,TRUE,TRUE,
+coref-141122355-173,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-136907450-70,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138295575-56,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137278983-3,Tesla,TRUE,TRUE,
+coref-141122355-26,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137878317-5,Tesla,TRUE,TRUE,
+coref-139581421-39,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138295578-3,Tesla,TRUE,TRUE,
+coref-138302984-6,Tesla,TRUE,TRUE,
+coref-136888234-21,Tesla,TRUE,TRUE,
+coref-136882888-19,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141048235-10,Tesla,TRUE,TRUE,
+coref-139259558-11,Tesla,TRUE,TRUE,
+coref-141109840-29,Tesla and SpaceX jointly,FALSE,FALSE,plural referent - refers to two companies
+coref-136579576-4,Tesla,TRUE,TRUE,
+coref-140776562-34,Tesla,TRUE,TRUE,
+coref-139566427-21,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139908164-10,Tesla stock (TSLA),TRUE,TRUE,
+coref-137230891-9,Tesla,TRUE,TRUE,
+coref-138292591-7,Tesla,TRUE,TRUE,
+coref-141120277-6,Tesla,TRUE,TRUE,
+coref-139187958-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140730354-27,Tesla,TRUE,TRUE,
+coref-141117221-37,Tesla,TRUE,TRUE,
+coref-141041608-38,Tesla,TRUE,TRUE,
+coref-137930808-28,Tesla,TRUE,TRUE,
+coref-139581421-16,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141072015-24,Tesla,TRUE,TRUE,
+coref-136495984-10,Tesla,TRUE,TRUE,
+coref-137589118-1,Tesla,TRUE,TRUE,
+coref-136541201-1,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141080291-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141122355-357,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139903860-10,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140729385-6,Tesla,TRUE,TRUE,
+coref-136904016-1,Tesla,TRUE,TRUE,
+coref-137884562-22,Tesla,TRUE,TRUE,
+coref-141043582-9,Tesla,TRUE,TRUE,
+coref-136495852-33,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139557401-7,Tesla,TRUE,TRUE,
+coref-137228482-17,Tesla,TRUE,TRUE,
+coref-137591345-3,Tesla,TRUE,TRUE,
+coref-137614378-11,Tesla's US market share (a percentage),FALSE,FALSE,refers to a non-company antecedent
+coref-137268657-46,Tesla,TRUE,TRUE,
+coref-141078694-14,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140456326-10,Tesla,TRUE,TRUE,
+coref-139903988-1,Tesla,TRUE,TRUE,
+coref-141122355-459,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138297097-2,Tesla stock (TSLA),TRUE,TRUE,
+coref-136896896-13,Tesla,TRUE,TRUE,
+coref-138411883-14,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141146266-24,Tesla,TRUE,TRUE,
+coref-141122355-189,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140770027-21,Tesla,TRUE,TRUE,
+coref-139909134-54,Tesla's management,TRUE,TRUE,
+coref-139912041-17,Tesla,TRUE,TRUE,
+coref-140121188-9,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-138704179-11,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139265830-7,Tesla,TRUE,TRUE,
+coref-139265831-1,Tesla,TRUE,TRUE,
+coref-141058326-36,Tesla stock (TSLA),TRUE,TRUE,
+coref-136907452-26,Tesla,TRUE,TRUE,
+coref-137230899-23,Tesla,TRUE,TRUE,
+coref-141120277-15,the TSLL leveraged ETF,FALSE,FALSE,refers to a non-company antecedent
+coref-139546951-2,Tesla,TRUE,TRUE,
+coref-138299999-154,Tesla,TRUE,TRUE,
+coref-139167808-8,Tesla,TRUE,TRUE,
+coref-141122355-138,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137230899-13,Tesla,TRUE,TRUE,
+coref-138291026-15,Tesla,TRUE,TRUE,
+coref-141048231-17,Tesla,TRUE,TRUE,
+coref-139165536-6,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140465726-3,Tesla stock (TSLA),TRUE,TRUE,
+coref-140446621-9,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139915918-21,the Power Inflow alert,FALSE,FALSE,refers to a non-company antecedent
+coref-139577822-32,Tesla,TRUE,TRUE,
+coref-138315115-16,Tesla,TRUE,TRUE,
+coref-137612585-7,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-139265830-5,Tesla,TRUE,TRUE,
+coref-141122355-495,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140772589-19,Tesla stock (TSLA),TRUE,TRUE,
+coref-139238355-24,Tesla,TRUE,TRUE,
+coref-138307221-368,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140736411-30,Tesla,TRUE,TRUE,
+coref-140733605-9,Tesla,TRUE,TRUE,
+coref-137897202-9,Tesla,TRUE,TRUE,
+coref-141122355-181,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141062140-13,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140736411-2,Tesla,TRUE,TRUE,
+coref-138307221-21,Tesla,TRUE,TRUE,
+coref-138932941-0,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-137591343-25,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-136478880-13,Tesla,TRUE,TRUE,
+coref-140736410-25,Tesla,TRUE,TRUE,
+coref-141122355-304,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-140774476-11,Tesla stock (TSLA),TRUE,TRUE,
+coref-140457083-18,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141048235-13,Tesla,TRUE,TRUE,
+coref-141122355-9,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved
+coref-141043582-3,no highlighted phrase,FALSE,NA,no phrase highlighted - nothing resolved

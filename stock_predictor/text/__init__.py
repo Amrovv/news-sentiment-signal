@@ -1,15 +1,20 @@
-"""Person A — Text & Deep Learning layer.
+"""Text layer: article bodies in, one feature row per article out.
 
-Delivers data/processed/articles.parquet (one row per article), joined by
-Person B on `article_id`. This package never imports `market/`; the layers
-meet only at the Parquet tables and shared constants in `config.py`.
+Joined to the market layer on `article_id`; never imports `market/`. The two
+layers meet only at the parquet tables and at `config.py`.
 
-Modules (promote from notebooks/a_*.ipynb when stable / reused):
-    collect.py      Finnhub corpus pull          -> data/raw/raw_articles.parquet
-    entity.py       spaCy sentence + alias filter
-    analyze.py      analyze() FinBERT scoring     (reused: batch AND live demo)
-    embeddings.py   768-dim vectors + novelty
-    topics.py       BERTopic + topic-conditioned sentiment
-    finetune.py     stage (c) fine-tune
-    build_table.py  run pipeline over corpus      -> data/processed/articles.parquet
+Modules in pipeline order:
+
+    entity_filter.py  sentence split, entity tagging, coref mapping, boilerplate
+                      flagging -> the 10-column SENTENCE_COLUMNS schema
+    coref.py          fastcoref wrapper and cluster cache, backend for the above
+    sentiment.py      FinBERT scoring, headline scoring, article aggregation
+    absa.py           aspect-based sentiment (DeBERTa) with name substitution
+    fusion.py         FinBERT + ABSA -> the shipped per-sentence score
+    coref_judge.py    Qwen2.5-7B referent verification (llama.cpp)
+    coref_eval.py     measures a judge against hand labels; gates coref_judge
+    run_pipeline.py   the driver: `python -m stock_predictor.text.run_pipeline`
+
+Every model-backed module degrades gracefully: is_available() returns False and
+the stage's columns are absent, rather than raising.
 """

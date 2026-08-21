@@ -29,21 +29,26 @@ clean:
 ## Lint using ruff (use `make format` to do formatting)
 .PHONY: lint
 lint:
-	ruff format --check
-	ruff check
+	uv run ruff format --check
+	uv run ruff check
 
 ## Format source code with ruff
 .PHONY: format
 format:
-	ruff check --fix
-	ruff format
+	uv run ruff check --fix
+	uv run ruff format
 
 
 
 ## Run tests
 .PHONY: test
 test:
-	python -m pytest tests
+	uv run pytest tests
+
+## Run tests, skipping the ones that load a real model
+.PHONY: test-fast
+test-fast:
+	uv run pytest tests -m "not slow"
 
 
 ## Set up Python interpreter environment
@@ -65,7 +70,7 @@ create_environment:
 ## Make dataset
 .PHONY: data
 data: requirements
-	$(PYTHON_INTERPRETER) stock_predictor/dataset.py
+	uv run python stock_predictor/dataset.py
 
 
 #################################################################################

@@ -1,5 +1,11 @@
 # Data
 
+# Everything under data/interim/: the model caches, the pipeline's phase outputs
+# and the 506MB processed article table. All regenerable, none belongs in git.
+# Keep the caches on disk though: a cold run costs ~5h, almost all of it the
+# coreference judge. The deliverable, data/processed/pipeline_run/, stays tracked.
+data/interim/
+
 
 # Mac OS-specific storage files
 .DS_Store
@@ -195,8 +201,17 @@ person_A_guide.md
 person_B_guide.md 
 project_overview.md  
 
-# Large processed parquet snapshots (only the best run is tracked)
-data/processed/processed_articles.parquet
-data/processed/processed_articles_2nd.parquet
-data/processed/processed_articles_origin.parquet
-data/processed/processed_articles_best.parquet
+# Large processed parquet snapshots. The live one moved to data/interim/, but
+# keep these so an older tree or a re-run cannot commit one by accident.
+data/processed/processed_articles*.parquet
+
+# Secrets -- never commit. config.py reads FINNHUB_API_KEY from here via python-dotenv.
+.env
+.env.*
+!.env.example
+
+# Local model weights: multi-GB GGUF and checkpoint files, fetched not authored.
+# JUDGE_MODEL_PATH points here; README records how to fetch.
+models/
+
+
