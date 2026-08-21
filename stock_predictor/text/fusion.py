@@ -17,7 +17,6 @@ and 2.3; this module only implements the result.
 
 import numpy as np
 import pandas as pd
-from loguru import logger
 
 from stock_predictor.config import LEAD_SENTENCE_WINDOW
 
@@ -80,9 +79,7 @@ def score_variants(sentences_df: pd.DataFrame, deadband: float = DEADBAND) -> pd
     conf_graft = absa * fin.abs()
     conf_graft_soft = absa_sign * fin.abs() * (0.5 + 0.5 * absa.abs())
 
-    conf_graft_floor = (
-        absa_sign * fin.abs() * (CONF_FLOOR + (1.0 - CONF_FLOOR) * absa.abs())
-    )
+    conf_graft_floor = absa_sign * fin.abs() * (CONF_FLOOR + (1.0 - CONF_FLOOR) * absa.abs())
 
     gated = fin * (1 - sentences_df["absa_neu"])
 
@@ -306,9 +303,7 @@ def aggregate_provenance_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
             # NaN share for an article with no target sentences at all: there
             # is no denominator, and 0.0 would claim the channel was measured
             # and found empty rather than that nothing was measured.
-            row[f"prov_{channel}_share"] = (
-                len(in_channel) / n_target if n_target else float("nan")
-            )
+            row[f"prov_{channel}_share"] = len(in_channel) / n_target if n_target else float("nan")
             for variant in AGGREGATED_VARIANTS:
                 scores = in_channel[f"__fus_{variant}"].dropna()
                 row[f"prov_{channel}_{variant}_mean"] = (
@@ -430,15 +425,18 @@ def aggregate_extra_fusion_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
         scored = g[g["__fus"].notna()]
         trusted = scored[scored["__channel"].isin(TRUSTED_CHANNELS)]
         gaps = g["__gap"].dropna()
-        rows.append({
-            "article_id": article_id,
-            "fus_maxmag": (
-                scored.loc[scored["__fus"].abs().idxmax(), "__fus"]
-                if len(scored) else float("nan")
-            ),
-            "fus_trusted_mean": trusted["__fus"].mean() if len(trusted) else float("nan"),
-            "fus_scorer_gap": gaps.mean() if len(gaps) else float("nan"),
-        })
+        rows.append(
+            {
+                "article_id": article_id,
+                "fus_maxmag": (
+                    scored.loc[scored["__fus"].abs().idxmax(), "__fus"]
+                    if len(scored)
+                    else float("nan")
+                ),
+                "fus_trusted_mean": trusted["__fus"].mean() if len(trusted) else float("nan"),
+                "fus_scorer_gap": gaps.mean() if len(gaps) else float("nan"),
+            }
+        )
 
     out = pd.DataFrame(rows, columns=["article_id", *EXTRA_FUSION_COLUMNS])
     return out

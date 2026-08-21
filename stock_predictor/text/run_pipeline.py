@@ -102,7 +102,9 @@ def write_feature_dictionary(final: pd.DataFrame, path=FINAL_DOC) -> None:
         mean = f"{col.mean():.3f}" if col.dtype.kind in "fi" else ""
         std = f"{col.std():.3f}" if col.dtype.kind in "fi" else ""
         desc = sentiment.FEATURE_DESCRIPTIONS.get(c, "")
-        lines.append(f"| `{c}` | {col.dtype} | {col.notna().mean():.1%} | {mean} | {std} | {desc} |")
+        lines.append(
+            f"| `{c}` | {col.dtype} | {col.notna().mean():.1%} | {mean} | {std} | {desc} |"
+        )
 
     lines += [
         "",
@@ -186,10 +188,12 @@ def main() -> None:
         # provenance split is additional. Merging both would duplicate them.
         agg = sentiment.aggregate_article_features(frame, headline_scores=headline_scores)
         prov = fusion.aggregate_provenance_features(frame)
-        out = (articles[["article_id", "timestamp_utc", "headline", "source"]]
-               .assign(ticker=PRIMARY_TICKER)
-               .merge(agg, on="article_id", how="left")
-               .merge(prov, on="article_id", how="left"))
+        out = (
+            articles[["article_id", "timestamp_utc", "headline", "source"]]
+            .assign(ticker=PRIMARY_TICKER)
+            .merge(agg, on="article_id", how="left")
+            .merge(prov, on="article_id", how="left")
+        )
         out.to_parquet(OUT / f"articles_{tag}.parquet", index=False)
         logger.info(f"[D] wrote articles_{tag}.parquet {out.shape}")
 
@@ -198,7 +202,9 @@ def main() -> None:
     # provenance columns: every score is a fusion of both scorers. This is the
     # file a downstream model reads.
     FINAL_DIR.mkdir(parents=True, exist_ok=True)
-    headline_absa = absa.score_headlines(articles[["article_id", "headline"]], ticker=PRIMARY_TICKER)
+    headline_absa = absa.score_headlines(
+        articles[["article_id", "headline"]], ticker=PRIMARY_TICKER
+    )
     features = sentiment.build_model_features(
         gated,
         headline_finbert=headline_scores,
@@ -206,12 +212,15 @@ def main() -> None:
         headlines_df=articles[["article_id", "headline"]],
         ticker=PRIMARY_TICKER,
     )
-    final = (articles[["article_id", "timestamp_utc", "source"]]
-             .assign(ticker=PRIMARY_TICKER)
-             .merge(features, on="article_id", how="inner")
-             [IDENTITY_COLUMNS + sentiment.MODEL_FEATURE_COLUMNS]
-             .sort_values("timestamp_utc")
-             .reset_index(drop=True))
+    final = (
+        articles[["article_id", "timestamp_utc", "source"]]
+        .assign(ticker=PRIMARY_TICKER)
+        .merge(features, on="article_id", how="inner")[
+            IDENTITY_COLUMNS + sentiment.MODEL_FEATURE_COLUMNS
+        ]
+        .sort_values("timestamp_utc")
+        .reset_index(drop=True)
+    )
     final.to_parquet(FINAL, index=False)
     logger.info(f"[E] wrote {FINAL} {final.shape}")
     write_feature_dictionary(final)

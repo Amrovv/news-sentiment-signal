@@ -21,16 +21,16 @@ being signed scalars from fusion.py; the triples behind them are still persisted
 
 import hashlib
 
+from loguru import logger
 import pandas as pd
 import torch
-from loguru import logger
 from tqdm import tqdm
 
 from stock_predictor.config import (
     FINBERT_MODEL,
     LEAD_SENTENCE_WINDOW,
-    PRIMARY_TICKER,
     MAX_TOKENS,
+    PRIMARY_TICKER,
     SENTIMENT_BATCH_SIZE,
     SENTIMENT_CACHE_PATH,
 )
@@ -215,9 +215,7 @@ def score_sentences(
 
     scored_rows = []
     with torch.no_grad():
-        for start in tqdm(
-            range(0, len(to_score), batch_size), desc="Scoring sentences (FinBERT)"
-        ):
+        for start in tqdm(range(0, len(to_score), batch_size), desc="Scoring sentences (FinBERT)"):
             batch = to_score[start : start + batch_size]
             batch_hashes = [h for h, _ in batch]
             batch_texts = [t for _, t in batch]
@@ -404,9 +402,9 @@ def aggregate_article_features(
             f"sentence table; the {len(FUSION_FEATURE_COLUMNS)} fus_* "
             "features will be all-NaN"
         )
-        fusion_features = pd.DataFrame(
-            {"article_id": sentences_df["article_id"].unique()}
-        ).assign(**{c: float("nan") for c in FUSION_FEATURE_COLUMNS})
+        fusion_features = pd.DataFrame({"article_id": sentences_df["article_id"].unique()}).assign(
+            **{c: float("nan") for c in FUSION_FEATURE_COLUMNS}
+        )
     else:
         fusion_features = fusion.aggregate_fusion_features(sentences_df)
 
@@ -633,7 +631,7 @@ DIVERGENCE_FEATURE_COLUMNS = ["fus_headline_gap", "fus_lead_gap"]
 
 MODEL_FEATURE_COLUMNS = [
     *SHAPE_FEATURE_COLUMNS,
-    *FUSION_FEATURE_COLUMNS,   # 6, all conf_graft_floor
+    *FUSION_FEATURE_COLUMNS,  # 6, all conf_graft_floor
     "fus_ceo_mean",
     "fus_headline",
     *fusion.EXTRA_FUSION_COLUMNS,
@@ -665,6 +663,7 @@ FEATURE_DESCRIPTIONS = {
     "fus_headline_gap": "fus_headline minus the body mean. How far the headline leads or lags the article.",
     "fus_lead_gap": "The lead score minus the body mean. How far the opening leads or lags the rest.",
 }
+
 
 def headline_names_target(headlines_df: pd.DataFrame, ticker: str) -> pd.Series:
     """Boolean mask: does each headline name the target explicitly?

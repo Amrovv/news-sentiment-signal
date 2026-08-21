@@ -23,8 +23,8 @@ into one column. Saves MERGE with the cache loaded at call start.
 import json
 import logging
 
-import pandas as pd
 from loguru import logger
+import pandas as pd
 
 from stock_predictor.config import COREF_BATCH_SIZE, COREF_CACHE_PATH, COREF_MODEL
 from stock_predictor.text.sentiment import hash_text
@@ -201,8 +201,7 @@ def resolve_documents(
     payload = [to_run[h] for h in run_hashes]
 
     logger.info(
-        f"Resolving coreference over {len(payload)} documents "
-        f"(max {batch_size} tokens per batch)"
+        f"Resolving coreference over {len(payload)} documents (max {batch_size} tokens per batch)"
     )
     try:
         preds = model.predict(texts=payload, max_tokens_in_batch=batch_size)

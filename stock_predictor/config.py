@@ -29,8 +29,8 @@ FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 # Tickers
 PRIMARY_TICKER = "TSLA"
 TRANSFER_TICKERS = ["NVDA"]  # cross-firm test
-CONTROL_TICKER = "KO"        # low-news control
-MARKET_INDEX = "SPY"         # abnormal-return benchmark
+CONTROL_TICKER = "KO"  # low-news control
+MARKET_INDEX = "SPY"  # abnormal-return benchmark
 
 # --- Company registry: one symmetric roster, any entry can be the target -----
 #

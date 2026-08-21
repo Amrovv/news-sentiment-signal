@@ -17,9 +17,9 @@ Nothing here hard-fails the pipeline: a broken model gives NaN, a corrupt cache 
 cold run, an unusable span the unchanged text.
 """
 
+from loguru import logger
 import pandas as pd
 import torch
-from loguru import logger
 from tqdm import tqdm
 
 from stock_predictor.config import (
@@ -152,8 +152,7 @@ def score_pairs(
         cache_lookup: dict[str, tuple[float, float, float]] = {}
     else:
         cache_lookup = {
-            row.pair_hash: (row.pos, row.neg, row.neu)
-            for row in cache_df.itertuples(index=False)
+            row.pair_hash: (row.pos, row.neg, row.neu) for row in cache_df.itertuples(index=False)
         }
 
     unique_by_hash: dict[str, tuple[str, str]] = {}
@@ -254,11 +253,16 @@ _BARE_PRONOUN_SURFACES = frozenset({"it", "they", "he", "she"})
 # name is one company. Longest-first so "'s" cannot match inside "'re". Straight
 # and curly apostrophes both appear in scraped text.
 _CLITIC_EXPANSIONS = [
-    ("'ll", "will"), ("’ll", "will"),
-    ("'ve", "has"), ("’ve", "has"),
-    ("'re", "is"), ("’re", "is"),
-    ("'s", "is"), ("’s", "is"),
-    ("'d", "would"), ("’d", "would"),
+    ("'ll", "will"),
+    ("’ll", "will"),
+    ("'ve", "has"),
+    ("’ve", "has"),
+    ("'re", "is"),
+    ("’re", "is"),
+    ("'s", "is"),
+    ("’s", "is"),
+    ("'d", "would"),
+    ("’d", "would"),
 ]
 
 
@@ -296,9 +300,9 @@ def _inflect_name(name: str, surface: str) -> str:
         out = f"{name} are"
     elif low in _CONTRACTIONS_IS:
         out = f"{name} is"
-    elif low in _POSSESSIVE_PRONOUNS or low.endswith("'s") or low.endswith("’s"):
+    elif low in _POSSESSIVE_PRONOUNS or low.endswith(("'s", "’s")):
         base = name
-        if not (base.lower().endswith("'s") or base.lower().endswith("’s")):
+        if not base.lower().endswith(("'s", "’s")):
             base = f"{base}'s"
         out = base
     else:
@@ -410,9 +414,7 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     m_target = out["mentions_target"].fillna(False).astype(bool).tolist()
     m_ceo = out["mentions_ceo"].fillna(False).astype(bool).tolist()
     resolved = (
-        out.get("resolved_by_coref", pd.Series(False, index=out.index))
-        .fillna(False)
-        .astype(bool)
+        out.get("resolved_by_coref", pd.Series(False, index=out.index)).fillna(False).astype(bool)
     ).tolist()
     span_start = out.get("mention_char_start", pd.Series([None] * len(out))).tolist()
     span_end = out.get("mention_char_end", pd.Series([None] * len(out))).tolist()
@@ -427,9 +429,7 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
             if name is None:
                 continue
             if resolved[i]:
-                new_text, outcome = _substitute_resolved(
-                    text, span_start[i], span_end[i], name
-                )
+                new_text, outcome = _substitute_resolved(text, span_start[i], span_end[i], name)
                 outcomes[outcome] += 1
                 if outcome == "bad_span":
                     logger.debug(
@@ -484,11 +484,7 @@ def score_sentence_table(
         return out
 
     cache_df = load_cache(cache_path)
-    pairs = [
-        (t, a)
-        for t, a in zip(out["absa_text"].tolist(), out["absa_aspect"].tolist())
-        if a
-    ]
+    pairs = [(t, a) for t, a in zip(out["absa_text"].tolist(), out["absa_aspect"].tolist()) if a]
     scored = score_pairs(pairs, cache_df=cache_df)
 
     # Merge, never replace — see the module docstring.
@@ -541,9 +537,9 @@ def score_headlines(
     # prefix is applied here, exactly as score_sentence_table() does, so the
     # two entry points hand back the same names.
     out["pair_hash"] = [pair_hash(t, aspect) for t in texts]
-    merged = out.merge(
-        scored.drop_duplicates("pair_hash"), on="pair_hash", how="left"
-    ).drop(columns=["pair_hash"])
+    merged = out.merge(scored.drop_duplicates("pair_hash"), on="pair_hash", how="left").drop(
+        columns=["pair_hash"]
+    )
     merged = merged.rename(columns=dict(zip(("pos", "neg", "neu"), SCORE_COLUMNS)))
     for col in SCORE_COLUMNS:
         merged[col] = pd.to_numeric(merged[col], errors="coerce")

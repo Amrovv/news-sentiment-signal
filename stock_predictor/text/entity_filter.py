@@ -22,9 +22,9 @@ implementation.
 
 import re
 
+from loguru import logger
 import pandas as pd
 import spacy
-from loguru import logger
 from spacy.tokens import Span
 from tqdm import tqdm
 
@@ -230,10 +230,20 @@ def _scan_company(pattern: re.Pattern | None, text: str) -> bool:
 
 # Pronouns that can stand in for a COMPANY, never a person. First person plural is
 # excluded: in news prose it is almost always inside a quote from a person.
-_MENTION_PRONOUNS = frozenset({
-    "it", "its", "they", "their", "them", "theirs",
-    "it's", "it’s", "they're", "they’re",
-})
+_MENTION_PRONOUNS = frozenset(
+    {
+        "it",
+        "its",
+        "they",
+        "their",
+        "them",
+        "theirs",
+        "it's",
+        "it’s",
+        "they're",
+        "they’re",
+    }
+)
 
 # Determiners that may head a short NP ending in a company head noun. A
 # determiner alone is handled by _MENTION_PRONOUNS; this set only matters when
@@ -242,12 +252,30 @@ _MENTION_DETERMINERS = frozenset({"the", "this", "its", "their", "our"})
 
 # Head nouns denoting a company or its stock. Deliberately narrow: each entry makes
 # "the <word>" substitutable everywhere in the corpus.
-_COMPANY_HEAD_NOUNS = frozenset({
-    "company", "firm", "business", "corporation", "corp", "group",
-    "conglomerate", "powerhouse", "giant", "maker", "automaker", "carmaker",
-    "chipmaker", "manufacturer", "automotive", "brand", "stock", "security",
-    "outfit", "enterprise",
-})
+_COMPANY_HEAD_NOUNS = frozenset(
+    {
+        "company",
+        "firm",
+        "business",
+        "corporation",
+        "corp",
+        "group",
+        "conglomerate",
+        "powerhouse",
+        "giant",
+        "maker",
+        "automaker",
+        "carmaker",
+        "chipmaker",
+        "manufacturer",
+        "automotive",
+        "brand",
+        "stock",
+        "security",
+        "outfit",
+        "enterprise",
+    }
+)
 
 # Cap on a determiner-headed referring NP, so "a school bus with its stop arm
 # extended" is not read as a company mention on its last word.
@@ -293,9 +321,7 @@ def is_substitutable_mention(surface: str) -> bool:
     if len(tokens) > 1 and _strip_possessive(tokens[0]) not in _MENTION_DETERMINERS:
         return False
     bare = _POSSESSIVE_CLITIC_RE.sub("", low).strip()
-    if bare in PRODUCT_KEYS:
-        return False
-    return True
+    return bare not in PRODUCT_KEYS
 
 
 def _is_person_like(
@@ -313,9 +339,13 @@ def _is_person_like(
 
     The surface-only form is what the ABSA path uses, holding the text but not a parse.
     """
-    if start is not None and end is not None and person_spans:
-        if any(start < p_end and p_start < end for p_start, p_end in person_spans):
-            return True
+    if (
+        start is not None
+        and end is not None
+        and person_spans
+        and any(start < p_end and p_start < end for p_start, p_end in person_spans)
+    ):
+        return True
     return _TITLE_TOKEN_RE.search(surface or "") is not None
 
 
@@ -667,9 +697,7 @@ def process_articles(
         from stock_predictor.text import coref
 
         if not coref.is_available():
-            logger.warning(
-                "Coreference requested but unavailable; tagging on explicit names only"
-            )
+            logger.warning("Coreference requested but unavailable; tagging on explicit names only")
         else:
             all_clusters = coref.resolve_documents(cleaned)
             patterns = _build_ticker_patterns(ticker)["names"]

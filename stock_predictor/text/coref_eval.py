@@ -31,9 +31,9 @@ cache loaded at call start.
 
 from dataclasses import dataclass
 
+from loguru import logger
 import numpy as np
 import pandas as pd
-from loguru import logger
 
 from stock_predictor.config import (
     COREF_EVAL_PATH,
