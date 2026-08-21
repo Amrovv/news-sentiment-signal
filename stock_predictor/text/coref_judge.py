@@ -1,106 +1,53 @@
-"""A local instruct-LLM judge for coreference referent verification.
+"""Local instruct-LLM judge for coreference referent verification.
 
-WHAT THIS ANSWERS, AND WHY IT IS A DIFFERENT QUESTION FROM THE TWO THAT FAILED.
-Attempts 1 and 2 both asked an ANOMALY-DETECTION question -- "is some other
-company mentioned near this chain?" -- and both failed for the same structural
-reason: presence-scanning has false positives (a rival named in passing does not
-make the sentence about the rival) and false negatives (the wrong referent is
-often not named nearby at all) relative to the question that actually matters.
-This module asks the REFERENT-VERIFICATION question instead: *does this anaphor
-denote the target company?* That is the question the human auditor answered to
-produce the labels, so it is the only question a judge can be measured on.
+Asks, per sentence: does this mention denote the target company? Gating is per
+sentence rather than per chain, since a chain can be right for some mentions and
+wrong for others.
 
-WHY A GENERATIVE MODEL AND NOT SOMETHING CHEAPER. The error tail is 68 distinct
-referents across 85 errors -- SpaceX, BYD, Rivian, Lightship, Agtonomy, an
-inverse-Tesla ETF, a Delaware court filing -- so no curated roster reaches it,
-and the project's ticker-agnostic constraint means a roster would have to be
-rebuilt for every new target anyway. Ruled out on the same evidence, before any
-were built: sentence embeddings (Tesla and SpaceX embed CLOSE, which is exactly
-the wrong signal), extractive QA, NLI as the judge, supervised training on 270
-labels, and KB entity linking. What is left is a model that already knows, from
-pre-training, that Lightship is an RV startup and BYD is a Chinese carmaker.
+Fails closed. Answers are `yes` / `no` / `unsure` and accept_only() takes `yes`
+alone; timeouts, malformed output and exceptions all discard. A GBNF grammar
+admits only the three tokens, so malformed output is impossible by construction.
 
-GATE PER SENTENCE AT THE REWRITE SITE, NOT PER CHAIN. A coref chain can be
-internally incoherent -- correct for some mentions and wrong for others -- and
-no per-chain verdict can express that. Judging each sentence independently
-dissolves the problem: incoherence is never detected, the wrong sentences simply
-fail on their own.
+Verdicts are cached under MODEL_ID and PROMPT_VERSION, which is what makes a
+feature set reproducible; temperature 0 only makes one process deterministic.
 
-FAIL CLOSED, ALWAYS. The judge returns `yes` / `no` / `unsure`, and
-coref_eval.accept_only() accepts on `yes` alone. Timeouts, malformed output, a
-model that answers in a paragraph, and outright exceptions are all discards.
-This is the project's posture applied literally: losing a sentence is
-acceptable, corrupting one is not.
+Ticker-agnostic: the target is a runtime parameter and the prompt names it from
+COMPANIES[target]["names"][0]. It relies on world knowledge, so accuracy is not
+uniform across tickers and nothing here detects when it has decayed.
 
-CONSTRAINED DECODING RATHER THAN OUTPUT PARSING. The model is given a GBNF
-grammar admitting exactly the three answer tokens, so a malformed answer is
-impossible by construction instead of being cleaned up afterwards with a
-regex over free text. That removes the entire class of "the model said 'Yes,
-because...' and the parser took the first word" bugs, and it makes `unsure` a
-verdict the model actually chose rather than a bucket the parser fell into.
-
-TEMPERATURE 0 IS NOT REPRODUCIBILITY. It makes one process deterministic; it
-does nothing about a llama.cpp bump, a different quantisation, or a rebuilt
-wheel. The disk cache in coref_eval.py is what makes a feature set reproducible,
-and prompt_version is in its key so editing anything in PROMPT_VERSION's
-neighbourhood invalidates the verdicts formed under the old wording.
-
-TICKER-AGNOSTIC. The target is a runtime parameter throughout. The prompt names
-the company using COMPANIES[target]["names"][0], the same config entry the rest
-of the pipeline resolves aliases from -- there is no per-company prompt text,
-no roster of confusable companies, and nothing an engineer must top up when the
-pipeline is pointed at a new ticker.
-
-ITS HONEST LIMIT, worth writing down before any result arrives: ticker-agnostic
-CODE is not the same claim as ticker-uniform ACCURACY. This judge works by
-knowing what Lightship and BYD are. That world knowledge is excellent for
-large-cap US equities and decays for obscure targets, and nothing in this module
-detects when it has decayed.
-
-API:
-    is_available()   -> bool, whether llama-cpp and the model file are usable
-    build_prompt()   -> the exact string the model is shown, for one context
-    make_judge()     -> a judge callable for coref_eval.evaluate_judge()
+    is_available()   whether llama-cpp and the model file are usable
+    build_prompt()   the exact string shown to the model, for one context
+    make_judge()     a judge callable for coref_eval.evaluate_judge()
+    judge_corpus()   the batch entry point: chunked, resumable, merged back on
 """
 
 from pathlib import Path
+import time
 
 from loguru import logger
+import pandas as pd
 
 from stock_predictor.config import COMPANIES, JUDGE_MODEL_PATH, PRIMARY_TICKER
 
-# Bump this whenever ANYTHING below changes the string the model sees -- the
-# system prompt, the instruction wording, the answer vocabulary, the context
-# rendering. It is part of the verdict cache key in coref_eval.py, so a bump is
-# what stops a new prompt being scored with the old prompt's answers. That is
-# the single most likely way this stage could produce a fabricated result.
+# Bump on ANY change to the string the model sees: it is part of the cache key.
 PROMPT_VERSION = "v3"
 
-# INDUSTRY-NEUTRAL WORDING IS PART OF THE TICKER-AGNOSTIC CONSTRAINT, and it is
-# easy to violate by accident. v1 of this prompt said "one of {company}'s
-# products or vehicles" -- "vehicles" is an automaker assumption that reads as
-# nonsense for a chipmaker or a beverage company, and it quietly handed the
-# judge a hint that only existed because this corpus's target happens to be a
-# carmaker. Ticker-agnostic means the prompt must not encode the target's
-# INDUSTRY any more than it encodes the target's competitors. The error classes
-# below are therefore named in industry-neutral terms only ("products", "a
-# person", "a fund or ETF", "an industry or market", "a generic definition"),
-# and a test asserts no sector vocabulary creeps back in.
+# Names the weights behind a verdict; a requantisation must change this.
+MODEL_ID = "qwen2.5-7b-instruct-q4km"
 
-# The model is constrained to emit exactly one of these three tokens. Kept in
-# sync with coref_eval.JUDGE_ANSWERS by the test suite rather than by hope.
+# Rows per cache flush: the ceiling on what a crash costs during an hours-long pass.
+JUDGE_CHUNK = 100
+
+# Error classes in the prompt are named generically, never by sector: naming an
+# industry would leak this corpus's target. A test guards against sector
+# vocabulary. Kept in sync with coref_eval.JUDGE_ANSWERS by the test suite.
 ANSWERS = ("yes", "no", "unsure")
 
-# GBNF grammar admitting only the three answers. See the module docstring on why
-# this is constrained decoding rather than parsing.
+# GBNF grammar admitting only the three answers.
 ANSWER_GRAMMAR = 'root ::= "yes" | "no" | "unsure"'
 
-# Context window. MEASURED, not guessed: over the 3,553 coref sentences in the
-# corpus the prompt is a median 387 tokens and a p99 of 513, but the maximum is
-# 2,446 -- three sentences (0.08%) exceed 2048, and at 2048 llama.cpp raises
-# rather than truncating. The 270-row eval set tops out at 513 and so gave no
-# warning of this; it under-represents long sentences. 4096 covers every prompt
-# in the corpus with margin, at the cost of a larger KV cache.
+# Corpus max prompt is 2,446 tokens, and llama.cpp raises rather than truncating
+# above n_ctx.
 DEFAULT_N_CTX = 4096
 
 _SYSTEM_PROMPT = (
@@ -109,32 +56,9 @@ _SYSTEM_PROMPT = (
     "surrounding article as evidence. You answer with one word and nothing else."
 )
 
-# The instruction. Three things in it are load-bearing and should not be
-# casually reworded:
-#
-#   * "the marked phrase" -- the judge is asked about ONE specific mention, the
-#     one the pipeline is about to overwrite. Asking "is this sentence about
-#     the company" is a different, easier and less useful question: a sentence
-#     can be about the target while the marked phrase refers to a rival.
-#   * the explicit invitation to answer `no` for people, funds, other companies
-#     and other companies' products. These are the actual error classes in the
-#     labelled set (Musk personally, ETFs holding the target, BYD, SpaceX), and
-#     naming the CLASSES rather than the companies is what keeps it
-#     ticker-agnostic -- the model supplies the world knowledge that BYD is a
-#     different company, the prompt never says so.
-#
-#     The TARGET'S OWN products go the other way: they answer `yes`. Sentiment
-#     about a company's own product is sentiment about the company for a price
-#     model -- "the Semi is delayed" is negative information about the target,
-#     and discarding it loses real signal. The labelled set was relabelled to
-#     match on 2026-08-18 (5 rows across the two eval files); a competitor's
-#     product still answers `no`, and so does a target product discussed in
-#     another company's context ("Megapack batteries in SpaceX data centers"
-#     is a sentence about SpaceX's data centres).
-#   * "unsure" being offered at all. A judge with no way to abstain converts
-#     every hard case into a confident coin flip, and under accept-on-yes an
-#     abstention is a discard -- which is the outcome the project wants for a
-#     case the model cannot resolve.
+# "the marked phrase" scopes the question to one mention, not the whole sentence.
+# The `no` classes are named generically, which is what keeps this ticker-agnostic.
+# The target's own products answer `yes`.
 _INSTRUCTION = """Below is a news article extract. One phrase in the marked sentence is wrapped in **double asterisks**.
 
 Question: does the marked phrase refer to {company}, or to something else?
@@ -145,12 +69,8 @@ Answer "unsure" if the extract does not contain enough evidence to decide.
 
 Answer with exactly one word: yes, no, or unsure."""
 
-# No-span rows carry no marked phrase -- coref tagged the sentence without
-# finding a substitutable mention -- so they get a question matched to the
-# weaker claim the pipeline is actually making about them. Asking about a
-# "marked phrase" that is not there would be incoherent, and silently reusing
-# the span wording is how a judge ends up scored on a question it was never
-# asked.
+# No-span rows have no marked phrase, so they get a question matched to the weaker
+# claim being made about them.
 _INSTRUCTION_NO_SPAN = """Below is a news article extract. One sentence is marked with >.
 
 Question: is the marked sentence making a statement about {company}?
@@ -166,11 +86,10 @@ _LOAD_FAILED = False
 
 
 def company_name(target: str = PRIMARY_TICKER) -> str:
-    """The display name for `target`, from the same config the aliases come from.
+    """Display name for `target`, from the same config the aliases come from.
 
-    Falls back to the ticker itself for a company with no entry -- a judge
-    prompted with "TSLA" instead of "Tesla" is worse but still coherent, which
-    is the right degradation for a target that has not been described yet.
+    Falls back to the ticker for a company with no entry: a prompt saying "TSLA"
+    rather than "Tesla" is worse but still coherent.
     """
     entry = COMPANIES.get(target, {})
     names = entry.get("names") or []
@@ -180,9 +99,9 @@ def company_name(target: str = PRIMARY_TICKER) -> str:
 def build_prompt(ctx, target: str = PRIMARY_TICKER) -> str:
     """The exact string shown to the model for one JudgeContext.
 
-    Separated from inference so the prompt can be inspected, diffed and tested
-    without loading 4.7GB of weights -- and so a human can read exactly what the
-    judge was asked when a verdict looks wrong.
+    Separate from inference so the prompt can be diffed and tested without loading
+    4.7GB of weights, and so a human can read what was asked when a verdict looks
+    wrong.
     """
     company = company_name(target)
     instruction = _INSTRUCTION if ctx.has_span else _INSTRUCTION_NO_SPAN
@@ -197,10 +116,7 @@ def build_prompt(ctx, target: str = PRIMARY_TICKER) -> str:
 def _load_model(model_path=None, n_ctx: int = DEFAULT_N_CTX, n_threads: int | None = None):
     """Load (once, then memoise) the GGUF model. Returns None on failure.
 
-    Memoised for the same reason entity_filter._NLP and coref._MODEL are: the
-    load costs seconds and gigabytes, and the corpus pass calls the judge
-    thousands of times. _LOAD_FAILED latches so a missing model file warns once
-    rather than on every row of a 3-hour run.
+    _LOAD_FAILED latches so a missing model file warns once rather than on every row.
     """
     global _MODEL, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
@@ -232,10 +148,9 @@ def _load_model(model_path=None, n_ctx: int = DEFAULT_N_CTX, n_threads: int | No
 
 
 def is_available(model_path=None) -> bool:
-    """True when llama-cpp imported AND the GGUF file loaded.
+    """True when llama-cpp imported and the GGUF file loaded.
 
-    A False here must mean "discard everything", never "raise" -- the same
-    enable-gate contract coref.is_available() has.
+    A False must mean "discard everything", never "raise".
     """
     return _load_model(model_path) is not None
 
@@ -249,15 +164,9 @@ def make_judge(
 ):
     """Build a judge callable for coref_eval.evaluate_judge().
 
-    Returns a function of one JudgeContext returning `yes` / `no` / `unsure`.
-    The model is loaded lazily on the first call, so building a judge is free
-    and an evaluation that turns out to be fully cached never loads the weights
-    at all -- the same property coref.resolve_documents() has.
-
-    Decoding is temperature 0 with the answer grammar attached, so the output is
-    one of three tokens by construction. Anything unexpected that still gets
-    through -- an empty completion, a backend that ignores the grammar -- lands
-    on `unsure`, which is a discard.
+    Returns a function of one JudgeContext returning `yes` / `no` / `unsure`. The model
+    loads lazily on first call. Decoding is temperature 0 with the answer grammar
+    attached; anything unexpected lands on `unsure` and is discarded.
     """
 
     def judge(ctx) -> str:
@@ -273,13 +182,9 @@ def make_judge(
                 stop=["<|im_end|>", "\n"],
             )
         except Exception as exc:  # noqa: BLE001 - fail closed, never kill the run
-            # THE JUDGE ITSELF MUST FAIL CLOSED, not just evaluate_judge().
-            # This was a real outage: one sentence whose prompt exceeded n_ctx
-            # raised ValueError out of llama.cpp and killed a 3.3-hour corpus
-            # pass at 67%. The module docstring promised "outright exceptions
-            # are all discards" while only the harness delivered that, so any
-            # caller driving the judge directly -- which is what a corpus run
-            # does -- inherited a crash instead of a discard.
+            # The judge itself must fail closed, not just the eval harness: a
+            # prompt exceeding n_ctx once raised out of llama.cpp and killed a
+            # corpus pass at 67%.
             logger.warning(
                 f"Judge failed on {ctx.article_id}/{ctx.sent_idx} "
                 f"({type(exc).__name__}: {exc}); returning 'unsure' (discard)"
@@ -302,3 +207,151 @@ def _grammar():
 
         _GRAMMAR = LlamaGrammar.from_string(ANSWER_GRAMMAR, verbose=False)
     return _GRAMMAR
+
+
+def judge_population(sentences_df: pd.DataFrame) -> pd.Series:
+    """Boolean mask of the sentences the judge is asked about.
+
+        mentions_target & ~is_boilerplate & resolved_by_coref
+
+    A sentence naming the company literally has no referent decision to verify.
+    Boilerplate is excluded because needs_score() already drops it.
+
+    Shared by the judging loop and the gate applying it, so the two cannot drift. A
+    missing column reads as all-False.
+    """
+
+    def _flag(name: str) -> pd.Series:
+        col = sentences_df.get(name, pd.Series(False, index=sentences_df.index))
+        return col.fillna(False).astype(bool)
+
+    return _flag("mentions_target") & ~_flag("is_boilerplate") & _flag("resolved_by_coref")
+
+
+def judge_corpus(
+    sentences_df: pd.DataFrame,
+    articles: pd.DataFrame,
+    target: str = PRIMARY_TICKER,
+    judge=None,
+    model_id: str = MODEL_ID,
+    prompt_version: str = PROMPT_VERSION,
+    chunk: int = JUDGE_CHUNK,
+    cache_path=None,
+) -> pd.DataFrame:
+    """Judge every coref-resolved sentence in `sentences_df`, verdicts merged on.
+
+    Returns a copy carrying two columns:
+
+        judge_answer    `yes` / `no` / `unsure`, NA outside judge_population()
+        judge_accepted  True when the row was never coref-resolved, or when its
+                        verdict passes accept_only(). Fails closed.
+
+    Chunked and resumable: verdicts flush every `chunk` rows to a cache keyed
+    (article_id, sent_idx, target, model_id, prompt_version), merge-never-replace, so
+    a re-run resumes rather than restarting. A fully cached corpus never loads the
+    weights.
+
+    `judge` is injectable so the loop can run without weights. `articles` supplies each
+    context window's headline; both frames are passed in, keeping this a transform.
+    """
+    from stock_predictor.text.coref_eval import (
+        CACHE_COLUMNS,
+        accept_only,
+        build_context,
+        load_judge_cache,
+        save_judge_cache,
+    )
+
+    cache_kwargs = {} if cache_path is None else {"path": cache_path}
+
+    out = sentences_df.copy()
+    pop = out[judge_population(out)]
+    spans = pop["mention_char_start"] if "mention_char_start" in pop.columns else None
+    n_span = int(spans.notna().sum()) if spans is not None else 0
+    logger.info(
+        f"judge_corpus: population {len(pop)} coref sentences "
+        f"({n_span} span, {len(pop) - n_span} no-span) across "
+        f"{pop['article_id'].nunique() if len(pop) else 0} articles"
+    )
+
+    cache = load_judge_cache(**cache_kwargs)
+    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    answered = set(zip(mine["article_id"], mine["sent_idx"]))
+    keys = pd.Series(list(zip(pop["article_id"], pop["sent_idx"])), index=pop.index, dtype=object)
+    todo = pop[~keys.isin(answered)] if len(pop) else pop
+    logger.info(
+        f"judge_corpus: {len(answered)} verdicts cached under "
+        f"{model_id}/{prompt_version}; {len(todo)} to judge"
+    )
+
+    if len(todo):
+        head_col = "headline" if "headline" in articles.columns else "title"
+        headlines = articles.set_index("article_id")[head_col].to_dict()
+        by_article = {aid: g.sort_values("sent_idx") for aid, g in out.groupby("article_id")}
+        if judge is None:
+            judge = make_judge(target=target)
+
+        fresh, start = [], time.time()
+        for i, row in enumerate(todo.itertuples(index=False), start=1):
+            ctx = build_context(
+                article_id=row.article_id,
+                sent_idx=row.sent_idx,
+                sentences=by_article[row.article_id],
+                headlines=headlines,
+                target=target,
+                mention_char_start=getattr(row, "mention_char_start", None),
+                mention_char_end=getattr(row, "mention_char_end", None),
+            )
+            fresh.append(
+                {
+                    "article_id": int(row.article_id),
+                    "sent_idx": int(row.sent_idx),
+                    "target": target,
+                    "model_id": model_id,
+                    "prompt_version": prompt_version,
+                    "answer": judge(ctx),
+                }
+            )
+            if i % chunk == 0 or i == len(todo):
+                # Merge, never replace -- `fresh` holds only this run's verdicts,
+                # and the cache is re-read so a longer-running sibling is not
+                # clobbered by this save.
+                save_judge_cache(
+                    pd.concat(
+                        [
+                            load_judge_cache(**cache_kwargs),
+                            pd.DataFrame(fresh, columns=CACHE_COLUMNS),
+                        ],
+                        ignore_index=True,
+                    ),
+                    **cache_kwargs,
+                )
+                fresh = []
+                rate = (time.time() - start) / i
+                logger.info(
+                    f"judge_corpus: {i}/{len(todo)} ({i / len(todo):.1%}) "
+                    f"{rate:.2f}s/row ~{(len(todo) - i) * rate / 3600:.1f}h left"
+                )
+
+    cache = load_judge_cache(**cache_kwargs)
+    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    out = out.merge(
+        mine[["article_id", "sent_idx", "answer"]].rename(columns={"answer": "judge_answer"}),
+        on=["article_id", "sent_idx"],
+        how="left",
+    )
+    # Recomputed after the merge: a verdict cached for a row no longer in the
+    # population must not resurrect.
+    in_population = judge_population(out)
+    out.loc[~in_population, "judge_answer"] = pd.NA
+
+    # Only rows the judge was asked about can be rejected: outside the population
+    # there was no question, so a surface match passes.
+    out["judge_accepted"] = ~in_population | out["judge_answer"].map(accept_only).astype(bool)
+
+    verdicts = out["judge_answer"].value_counts().to_dict()
+    logger.info(
+        f"judge_corpus: {int(out['judge_answer'].notna().sum())} rows carry a verdict "
+        f"({verdicts}); {int((~out['judge_accepted']).sum())} rows dropped by the gate"
+    )
+    return out

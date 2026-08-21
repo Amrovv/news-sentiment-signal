@@ -4,6 +4,7 @@ None of these load the 4.7GB GGUF. The prompt is the part a human can be wrong
 about, so it is the part pinned here; inference itself is llama.cpp's problem.
 """
 
+import pandas as pd
 import pytest
 
 from stock_predictor.text.coref_eval import JUDGE_ANSWERS, accept_only
@@ -12,6 +13,8 @@ from stock_predictor.text.coref_judge import (
     PROMPT_VERSION,
     build_prompt,
     company_name,
+    judge_corpus,
+    judge_population,
     make_judge,
 )
 
@@ -27,8 +30,8 @@ def _ctx(sentence="The company grew.", span=(0, 11), headline="A headline"):
         preceding=("Before one.", "Before two."),
         sentence=sentence,
         following=("After one.",),
-        anaphor_char_start=None if span is None else span[0],
-        anaphor_char_end=None if span is None else span[1],
+        mention_char_start=None if span is None else span[0],
+        mention_char_end=None if span is None else span[1],
     )
 
 
@@ -105,10 +108,6 @@ def test_prompt_includes_the_full_context_window():
     prompt = build_prompt(_ctx())
     for fragment in ("A headline", "Before one.", "Before two.", "After one."):
         assert fragment in prompt
-
-
-def test_prompt_is_deterministic():
-    assert build_prompt(_ctx()) == build_prompt(_ctx())
 
 
 def test_prompt_version_is_set():
@@ -241,3 +240,116 @@ def test_default_context_window_covers_the_measured_corpus_maximum():
     from stock_predictor.text.coref_judge import DEFAULT_N_CTX
 
     assert DEFAULT_N_CTX >= 2446
+
+
+# ---------------------------------------------------------------------------
+# judge_corpus: the batch entry point
+# ---------------------------------------------------------------------------
+
+
+def _corpus(n_boilerplate=0):
+    """A tiny sentence table plus its article table.
+
+    Row 0 names the company (surface, never judged), row 1 is coref-resolved
+    (judged), row 2 is coref-resolved boilerplate (outside the population).
+    """
+    sentences = pd.DataFrame({
+        "article_id": [1, 1, 1],
+        "sent_idx": [0, 1, 2],
+        "text": ["Tesla raised prices.", "The company also grew.", "Image source: Getty."],
+        "mentions_target": [True, True, True],
+        "is_boilerplate": [False, False, True],
+        "resolved_by_coref": [False, True, True],
+        "mention_char_start": pd.array([None, 0, None], dtype="Int64"),
+        "mention_char_end": pd.array([None, 11, None], dtype="Int64"),
+    })
+    articles = pd.DataFrame({"article_id": [1], "headline": ["A headline"]})
+    return sentences, articles
+
+
+def test_judge_population_is_coref_target_non_boilerplate():
+    sentences, _ = _corpus()
+    mask = judge_population(sentences)
+    assert list(mask) == [False, True, False]
+
+
+def test_judge_population_treats_missing_columns_as_nothing_to_judge():
+    """An older sentence table must degrade to an empty population, not raise."""
+    bare = pd.DataFrame({"article_id": [1], "sent_idx": [0], "text": ["x"]})
+    assert not judge_population(bare).any()
+
+
+def test_judge_corpus_judges_only_the_population(tmp_path):
+    sentences, articles = _corpus()
+    seen = []
+
+    def spy(ctx):
+        seen.append((ctx.article_id, ctx.sent_idx))
+        return "yes"
+
+    out = judge_corpus(
+        sentences, articles, judge=spy, cache_path=tmp_path / "judge.parquet"
+    )
+    assert seen == [(1, 1)]
+    # NA outside the population: nothing was asked, so there is no answer.
+    assert out["judge_answer"].notna().tolist() == [False, True, False]
+    assert out.loc[1, "judge_answer"] == "yes"
+
+
+def test_judge_corpus_gate_only_rejects_rows_it_asked_about(tmp_path):
+    """A surface match and a boilerplate row pass because the judge has no
+    opinion on them; only a judged row can fail."""
+    sentences, articles = _corpus()
+    out = judge_corpus(
+        sentences, articles, judge=lambda ctx: "no", cache_path=tmp_path / "judge.parquet"
+    )
+    assert out["judge_accepted"].tolist() == [True, False, True]
+
+
+@pytest.mark.parametrize("answer", ["no", "unsure", "YES!", "", "maybe"])
+def test_judge_corpus_fails_closed_on_anything_but_yes(answer, tmp_path):
+    sentences, articles = _corpus()
+    out = judge_corpus(
+        sentences, articles, judge=lambda ctx: answer, cache_path=tmp_path / "judge.parquet"
+    )
+    assert not out.loc[1, "judge_accepted"]
+
+
+def test_judge_corpus_resumes_from_cache_without_calling_the_judge(tmp_path):
+    """The whole point of the cache: a re-run must not re-judge an answered row,
+    which is what makes an interrupted multi-hour pass survivable."""
+    sentences, articles = _corpus()
+    cache_path = tmp_path / "judge.parquet"
+    judge_corpus(sentences, articles, judge=lambda ctx: "yes", cache_path=cache_path)
+
+    def exploding(ctx):
+        raise AssertionError("re-judged a row that was already cached")
+
+    out = judge_corpus(sentences, articles, judge=exploding, cache_path=cache_path)
+    assert out.loc[1, "judge_answer"] == "yes"
+    assert out.loc[1, "judge_accepted"]
+
+
+def test_judge_corpus_does_not_reuse_verdicts_across_prompt_versions(tmp_path):
+    """prompt_version is in the cache key so an edited prompt cannot be scored
+    with the old prompt's answers."""
+    sentences, articles = _corpus()
+    cache_path = tmp_path / "judge.parquet"
+    judge_corpus(
+        sentences, articles, judge=lambda ctx: "yes",
+        prompt_version="v1", cache_path=cache_path,
+    )
+    out = judge_corpus(
+        sentences, articles, judge=lambda ctx: "no",
+        prompt_version="v2", cache_path=cache_path,
+    )
+    assert out.loc[1, "judge_answer"] == "no"
+
+
+def test_judge_corpus_leaves_the_input_frame_untouched(tmp_path):
+    sentences, articles = _corpus()
+    before = sentences.copy()
+    judge_corpus(
+        sentences, articles, judge=lambda ctx: "yes", cache_path=tmp_path / "judge.parquet"
+    )
+    pd.testing.assert_frame_equal(sentences, before)

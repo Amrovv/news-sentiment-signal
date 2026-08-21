@@ -1,81 +1,31 @@
 """Measuring a coreference referent-verification judge against hand labels.
 
-WHY THIS EXISTS, AND WHY IT EXISTS BEFORE THE JUDGE DOES. Two attempts have
-already been made to suppress wrong coref resolutions with hand-reasoned rules.
-Both were built on argument, shipped without being measured against labels, and
-both turned out to discard ~90% of the WRONG rows they were aimed at only by
-also discarding most of the right ones. The third attempt (a local instruct-LLM
-judge) is the expensive one, and the only thing that separates it from attempts
-1 and 2 is that this module exists first. Nothing that claims to verify a
-referent goes near the pipeline until it has a row in `evaluate_judge()`'s
-output.
+A judge is any callable reading one sentence in context and answering `yes` / `no`
+/ `unsure`. accept_only() is the single definition of the accept rule: `yes` alone,
+everything else including errors and timeouts discards.
 
-WHAT A "JUDGE" IS HERE. Any callable that reads one sentence in context and
-answers "does the anaphor in this sentence denote the target company?" with
-exactly one of `yes` / `no` / `unsure`. That three-way contract is deliberate
-and is not a stylistic choice: the project's posture is that losing a sentence
-is acceptable and corrupting one is not, so the pipeline **accepts on `yes` and
-discards on anything else** — including on the judge erroring out or timing out.
-`unsure` therefore is not a third outcome to be handled later, it is a discard
-that happens to be honest about why. `accept_only()` implements exactly this
-rule and is the only place it is written down.
+The headline metric is accept-precision, of the rows a judge accepts what fraction
+were about the target, since rejected rows never reach the model. Every metric is
+reported against an accept-everything baseline, and split by has_span into `span`,
+`no-span` and `all`, because the two sub-populations differ sharply.
 
-THE METRIC THAT MATTERS IS ACCEPT-PRECISION, not accuracy and not F1. Of the
-rows a judge accepts, what fraction were genuinely about the target? That is the
-quantity the downstream sentiment model is exposed to, because rejected rows
-simply never reach it. Recall is reported but is explicitly negotiable — a judge
-that discards half the corpus and is right about everything it keeps is a good
-outcome here, and a judge with beautiful F1 and 85% accept-precision is not.
-Every metric is also reported against an ACCEPT-EVERYTHING BASELINE, i.e. what
-the pipeline does today, because "the judge scores 89%" is meaningless until you
-know that doing nothing scores 89% too.
+Rows flagged `borderline` are counted as `target` by convention, and figures are
+reported with and without them.
 
-ALWAYS SPLIT BY has_span. The two coref sub-populations are 89.0% and 56.5%
-correct respectively (n=100 / n=170, notebook 2.7) — different enough that a
-pooled number hides the result rather than summarising it. A judge could improve
-the pooled figure while making the span channel worse, and a pooled report would
-not show it. Every metric therefore comes back three times: `span`, `no-span`,
-and `all`.
+build_context() is the single definition of what a judge reads, matching what the
+human auditor read; verify_contexts_match() checks it still reproduces the text
+stored in the eval parquet.
 
-BORDERLINE ROWS BOTH WAYS. 37 of the 270 labelled rows are flagged `borderline`
-(defensible either way — mostly plural/dual-entity sentences: "both firms",
-"Musk's companies"). They are counted as `target` by the labelling convention,
-but any headline figure computed from them is reported twice, with and without,
-because a judge that only looks good when the ambiguous rows are counted its way
-has not been shown to be good. That 37 is worth internalising: **36 of the 37
-are no-span rows**, so excluding them shrinks the no-span sample from 170 to 134
-while leaving the span sample essentially untouched (100 -> 99). The two
-borderline treatments are therefore not a cosmetic sensitivity check on the
-no-span channel — they are two materially different samples of it.
+Verdicts are keyed (article_id, sent_idx, target, model_id, prompt_version) and
+persisted, so a reworded prompt cannot reuse old answers. Saves MERGE with the
+cache loaded at call start.
 
-THE CONTEXT BUILDER IS SHARED ON PURPOSE. The human auditor who produced the
-labels read the headline, 4 preceding sentences, the sentence itself and 1
-following sentence. A judge given less than that is not being measured against
-the labels, it is being measured against a harder task than the human solved —
-and the consultation that motivated this whole stage put it bluntly: *a method
-that reads less than the human auditor needed cannot match the auditor*. So
-`build_context()` is the single definition of "what gets read", used both to
-regenerate labelling sheets and to feed judges, and `verify_context_matches()`
-checks it still reproduces the exact sentence text stored in the eval parquet.
-
-THE CACHE IS WHAT MAKES A JUDGE REPRODUCIBLE, not temperature 0. A local LLM at
-temperature 0 is reproducible in principle and not in practice — a driver
-update, a quantisation change or a llama.cpp bump moves outputs. Verdicts are
-therefore keyed on (article_id, sent_idx, target, model_id, prompt_version) and
-persisted, exactly like the three existing caches in data/interim/. The key
-includes prompt_version specifically so that editing the prompt does NOT
-silently reuse verdicts formed under the old one — that is the failure this
-scheme exists to prevent. Saves MERGE with the cache loaded at the start of the
-call and never replace it; sentiment.py had a truncation bug from replacing, and
-the same shape of bug here would throw away hours of CPU inference.
-
-API:
-    load_eval_set()          -> the hand-labelled frame, validated
-    build_context()          -> one JudgeContext for an (article_id, sent_idx)
-    build_contexts()         -> contexts aligned 1:1 with an eval frame
-    verify_contexts_match()  -> assert the builder reproduces the eval text
-    accept_only()            -> the yes/no/unsure -> accept/discard rule
-    evaluate_judge()         -> metrics vs the labels, split and baselined
+    load_eval_set()          the hand-labelled frame, validated
+    build_context()          one JudgeContext for an (article_id, sent_idx)
+    build_contexts()         contexts aligned 1:1 with an eval frame
+    verify_contexts_match()  assert the builder reproduces the eval text
+    accept_only()            the yes/no/unsure -> accept/discard rule
+    evaluate_judge()         metrics vs the labels, split and baselined
     load_judge_cache() / save_judge_cache()
 """
 
@@ -109,8 +59,7 @@ EVAL_COLUMNS = [
 VERDICT_TARGET = "target"
 VERDICT_OTHER = "other"
 
-# The judge contract. Anything not in this set is a protocol violation by the
-# judge and is treated as `unsure` (i.e. discarded) rather than raising -- a
+# Anything outside this set is treated as `unsure` rather than raising: a
 # malformed answer on row 4,000 of a 3-hour run must not lose the run.
 JUDGE_ANSWERS = ("yes", "no", "unsure")
 
@@ -123,19 +72,16 @@ CACHE_COLUMNS = [
     "answer",
 ]
 
-# Population labels used in evaluate_judge()'s output. 'all' is reported last
-# and deliberately never alone -- see the module docstring on has_span.
+# 'all' is reported last and never alone; see the module docstring on has_span.
 POPULATIONS = ("span", "no-span", "all")
 
 
 def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval for k successes out of n.
 
-    Wilson rather than the normal approximation because these samples are small
-    (n=100 span, n=170 no-span, and much smaller once sliced) and rates sit near
-    the ends of the range where the normal interval runs off past 0 or 1 and
-    stops meaning anything. Same definition notebook 2.7 uses -- kept identical
-    so a number computed here and a number computed there are comparable.
+    Wilson rather than the normal approximation: these samples are small and the
+    rates sit near the ends of the range, where the normal interval runs past 0 or 1.
+    Identical to notebook 2.7's definition so the numbers are comparable.
     """
     if n == 0:
         return (float("nan"), float("nan"))
@@ -150,13 +96,10 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 class JudgeContext:
     """Everything a judge is allowed to read about one sentence.
 
-    Frozen because a judge must not be able to mutate what the next judge sees;
-    an accidental in-place edit inside one judge implementation would otherwise
-    silently change the task for everything evaluated after it in the same run.
+    Frozen so one judge cannot mutate what the next one sees.
 
-    `anaphor_char_start`/`anaphor_char_end` are offsets into `sentence` and are
-    None for no-span rows -- those were tagged without any substitutable mention
-    being found, which is exactly why they are a separate population.
+    `mention_char_start` / `mention_char_end` are offsets into `sentence`, None for
+    no-span rows.
     """
 
     article_id: int
@@ -166,30 +109,30 @@ class JudgeContext:
     preceding: tuple[str, ...]
     sentence: str
     following: tuple[str, ...]
-    anaphor_char_start: int | None = None
-    anaphor_char_end: int | None = None
+    mention_char_start: int | None = None
+    mention_char_end: int | None = None
 
     @property
     def has_span(self) -> bool:
-        return self.anaphor_char_start is not None and self.anaphor_char_end is not None
+        return self.mention_char_start is not None and self.mention_char_end is not None
 
     @property
-    def anaphor(self) -> str | None:
+    def mention(self) -> str | None:
         """The literal text the pipeline would overwrite, or None if no span."""
         if not self.has_span:
             return None
-        return self.sentence[self.anaphor_char_start : self.anaphor_char_end]
+        return self.sentence[self.mention_char_start : self.mention_char_end]
 
     def marked_sentence(self, marker: str = "**") -> str:
-        """The sentence with the anaphor delimited, or unchanged if no span.
+        """The sentence with the mention delimited, or unchanged if no span.
 
         The human labeller was shown which mention was under question; a judge
-        asked "does the anaphor denote the target" without being told WHICH
-        anaphor is answering a different, harder question.
+        asked "does the mention denote the target" without being told WHICH
+        mention is answering a different, harder question.
         """
         if not self.has_span:
             return self.sentence
-        start, end = self.anaphor_char_start, self.anaphor_char_end
+        start, end = self.mention_char_start, self.mention_char_end
         return f"{self.sentence[:start]}{marker}{self.sentence[start:end]}{marker}{self.sentence[end:]}"
 
     def render(self, marker: str = "**") -> str:
@@ -242,21 +185,19 @@ def build_context(
     sentences: pd.DataFrame,
     headlines: dict,
     target: str = PRIMARY_TICKER,
-    anaphor_char_start=None,
-    anaphor_char_end=None,
+    mention_char_start=None,
+    mention_char_end=None,
     n_preceding: int = EVAL_CONTEXT_PRECEDING,
     n_following: int = EVAL_CONTEXT_FOLLOWING,
 ) -> JudgeContext:
     """Build the context window for one sentence.
 
-    `sentences` is the sentence table (or any subset containing this article);
-    `headlines` maps article_id -> headline. Both are passed in rather than
-    loaded here so that a caller evaluating 3,617 rows reads the parquet once
-    instead of 3,617 times.
+    `headlines` maps article_id -> headline. Both frames are passed in rather than
+    loaded here, so evaluating 3,617 rows reads the parquet once.
 
-    The window is the labelling convention, not a tunable: headline + 4
-    preceding + the sentence + 1 following. Deviating from it means the judge is
-    not solving the task the labels describe.
+    The window is the labelling convention, not a tunable: headline, 4 preceding
+    sentences, the sentence, 1 following. Deviating means the judge is not solving
+    the task the labels describe.
     """
     article = sentences[sentences["article_id"] == article_id].sort_values("sent_idx")
     row = article[article["sent_idx"] == sent_idx]
@@ -281,8 +222,8 @@ def build_context(
         preceding=tuple(preceding["text"].astype(str)),
         sentence=str(row["text"].iloc[0]),
         following=tuple(following["text"].astype(str)),
-        anaphor_char_start=_clean(anaphor_char_start),
-        anaphor_char_end=_clean(anaphor_char_end),
+        mention_char_start=_clean(mention_char_start),
+        mention_char_end=_clean(mention_char_end),
     )
 
 
@@ -302,7 +243,7 @@ def build_contexts(
     head_col = "headline" if "headline" in articles.columns else "title"
     headlines = articles.set_index("article_id")[head_col].to_dict()
 
-    has_spans = "anaphor_char_start" in eval_df.columns
+    has_spans = "mention_char_start" in eval_df.columns
     return [
         build_context(
             article_id=row.article_id,
@@ -310,8 +251,8 @@ def build_contexts(
             sentences=sentences,
             headlines=headlines,
             target=target,
-            anaphor_char_start=getattr(row, "anaphor_char_start", None) if has_spans else None,
-            anaphor_char_end=getattr(row, "anaphor_char_end", None) if has_spans else None,
+            mention_char_start=getattr(row, "mention_char_start", None) if has_spans else None,
+            mention_char_end=getattr(row, "mention_char_end", None) if has_spans else None,
             **kwargs,
         )
         for row in eval_df.itertuples(index=False)
@@ -319,13 +260,11 @@ def build_contexts(
 
 
 def verify_contexts_match(eval_df: pd.DataFrame, contexts: list[JudgeContext]) -> None:
-    """Assert the rebuilt context reproduces the sentence text stored in the eval set.
+    """Assert the rebuilt context reproduces the sentence text in the eval set.
 
-    A silent drift between the corpus and the labels -- a regenerated
-    sentences.parquet, a changed sentence splitter -- would mean the judge is
-    reading a different sentence from the one the human labelled, while every
-    metric still computes cleanly. This is the check that turns that into a
-    loud failure. Called by evaluate_judge() before any judging happens.
+    A regenerated sentences.parquet or a changed splitter would have the judge
+    reading a different sentence from the one labelled, while every metric still
+    computed cleanly. Called by evaluate_judge() before any judging.
     """
     mismatches = [
         (row.row_id, ctx.sentence, row.text)
@@ -392,10 +331,8 @@ def _metrics(truth_is_target: pd.Series, accepted: pd.Series) -> dict:
 
     `truth_is_target` and `accepted` are aligned boolean Series.
 
-    accept_precision is the headline: of what survives, how much is right. The
-    remaining fields exist to stop it being read in isolation -- a judge can
-    reach 100% accept-precision by accepting one row, which `accept_rate` and
-    `correct_lost` make immediately obvious.
+    accept_precision is the headline: of what survives, how much is right. The rest
+    stop it being read alone, since accepting a single row scores 100%.
     """
     n = len(truth_is_target)
     n_errors = int((~truth_is_target).sum())
@@ -438,20 +375,15 @@ def evaluate_judge(
 ) -> pd.DataFrame:
     """Score a judge against the hand labels. Returns one row per slice.
 
-    `judge` is any callable taking a JudgeContext and returning `yes`/`no`/
-    `unsure`. It may raise: an exception is caught, logged once per run, and
-    counted as `unsure` -- i.e. a discard -- because the pipeline's rule is to
-    fail closed, and a judge that dies on 3% of rows should show up as a lower
-    accept rate, not as a crashed evaluation.
+    `judge` takes a JudgeContext and returns `yes` / `no` / `unsure`. It may raise:
+    exceptions are caught, logged once, and counted as `unsure`, so a judge dying on
+    3% of rows shows up as a lower accept rate rather than a crashed evaluation.
 
-    Either pass `contexts` (already built) or `sentences` + `articles` and they
-    will be built here. Contexts are verified against the labelled text before
-    anything is judged.
+    Either pass `contexts`, or `sentences` + `articles` to have them built here.
+    Contexts are verified against the labelled text first.
 
-    The returned frame carries, for each population in POPULATIONS and each
-    `borderline` treatment ('included' / 'excluded'), the metrics from
-    `_metrics()` plus a BASELINE row per slice for accept-everything. Read the
-    baseline first: a judge is only interesting where it beats it.
+    Carries, per population and per `borderline` treatment, the metrics from
+    _metrics() plus an accept-everything baseline row. Read the baseline first.
     """
     if contexts is None:
         if sentences is None or articles is None:

@@ -45,8 +45,8 @@ def _row(row_id, sent_idx, verdict, has_span=True, borderline=False, article_id=
         "has_span": has_span,
         "verdict": verdict,
         "borderline": borderline,
-        "anaphor_char_start": None if span is None else span[0],
-        "anaphor_char_end": None if span is None else span[1],
+        "mention_char_start": None if span is None else span[0],
+        "mention_char_end": None if span is None else span[1],
     }
 
 
@@ -124,9 +124,9 @@ def test_build_context_raises_on_missing_sentence():
 
 
 def test_build_context_treats_nan_span_as_no_span():
-    ctx = build_context(1, 3, _sentences(), {1: "H"}, anaphor_char_start=np.nan)
+    ctx = build_context(1, 3, _sentences(), {1: "H"}, mention_char_start=np.nan)
     assert not ctx.has_span
-    assert ctx.anaphor is None
+    assert ctx.mention is None
 
 
 def test_build_contexts_preserves_eval_frame_order():
@@ -140,10 +140,10 @@ def test_build_contexts_preserves_eval_frame_order():
 # ---------------------------------------------------------------------------
 
 
-def test_marked_sentence_delimits_the_anaphor():
+def test_marked_sentence_delimits_the_mention():
     ctx = JudgeContext(1, 0, "TSLA", "H", (), "The company grew.", (), 0, 11)
     assert ctx.marked_sentence() == "**The company** grew."
-    assert ctx.anaphor == "The company"
+    assert ctx.mention == "The company"
 
 
 def test_marked_sentence_is_unchanged_without_a_span():
@@ -165,6 +165,8 @@ def test_render_includes_headline_context_and_the_marked_sentence():
 
 
 def test_verify_contexts_match_passes_when_text_agrees():
+    # Asserts by not raising: this is the happy path of the drift check that
+    # evaluate_judge() runs before any judging.
     eval_df = _eval_frame([_row("R-1", 3, "target")])
     verify_contexts_match(eval_df, build_contexts(eval_df, _sentences(), _articles()))
 

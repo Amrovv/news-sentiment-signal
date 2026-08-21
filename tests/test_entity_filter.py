@@ -8,7 +8,6 @@ from stock_predictor.text.entity_filter import (
     flag_boilerplate,
     map_coref_clusters,
     process_articles,
-    resolve_anaphora,
     split_sentences,
     tag_sentences,
 )
@@ -16,8 +15,8 @@ from stock_predictor.text.entity_filter import (
 TICKER = "TSLA"
 
 # A small multi-company corpus reused by the coref tests. Each body mixes an
-# explicit mention, an anaphoric follow-up, and an incidental rival mention --
-# i.e. the shape the heuristic is known to get wrong.
+# explicit mention, a follow-up that only refers back to the company, and an
+# incidental rival mention -- i.e. the shape that needs coreference to tag.
 COREF_CORPUS = pd.DataFrame(
     {
         "article_id": [101, 102, 103],
@@ -50,95 +49,7 @@ def test_basic_target_mention():
     assert len(df) == 1
     row = df.iloc[0]
     assert row["mentions_target"] == True
-    assert row["resolved_by_anaphora"] == False
-
-
-def test_subject_beats_first_mention():
-    # Dependency-based antecedent selection, replacing first-mention-wins. Ford
-    # is named FIRST but sits in a prepositional phrase ("According to Ford");
-    # Tesla is the grammatical subject. The sentence is about Tesla, so the
-    # antecedent must be the target -- verified through the following
-    # "The company..." sentence, which is what the antecedent actually feeds.
-    sentences = [
-        "According to Ford, Tesla is expanding its Berlin plant.",
-        "The company said the expansion would finish next year.",
-    ]
-    df = resolve_anaphora(30, sentences, TICKER, use_anaphora_fallback=True)
-
-    # Ford is no longer detectable (other-company detection removed), so the
-    # only antecedent candidate is the target -- which is what the following
-    # "The company..." sentence must inherit.
-    assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["resolved_by_anaphora"] == True
-
-
-def test_target_is_subject_flag():
-    subj = tag_sentences(31, ["Tesla raised prices."], TICKER)
-    assert subj.iloc[0]["target_is_subject"] == True
-    assert subj.iloc[0]["mentions_target"] == True
-
-    # Incidental appositive mention: the target is named but is not what the
-    # sentence is about.
-    non_subj = tag_sentences(
-        31, ["Lucid's debut was led by Peter Rawlinson, Tesla's former engineer."], TICKER
-    )
-    assert non_subj.iloc[0]["mentions_target"] == True
-    assert non_subj.iloc[0]["target_is_subject"] == False
-
-
-def test_descriptor_decays_with_gap():
-    # Descriptor resolution obeys the same ANAPHORA_MAX_GAP decay as generic
-    # anaphora: a qualifying company named too far back is not carried forward.
-    from stock_predictor.config import ANAPHORA_MAX_GAP
-
-    filler = [
-        f"This is unrelated filler sentence number {i} about the weather."
-        for i in range(ANAPHORA_MAX_GAP)
-    ]
-    sentences = ["Ford reported strong truck sales.", *filler, "The automaker cut prices."]
-    df = resolve_anaphora(37, sentences, TICKER, use_anaphora_fallback=True)
-
-    last = df.iloc[-1]
-    assert last["mentions_target"] == False
-    assert last["resolved_by_anaphora"] == False
-
-
-def test_question_sentences_do_not_update_antecedent():
-    # Promo/rhetorical questions name companies without establishing a topic.
-    sentences = [
-        "Ford reported strong truck sales.",
-        "Missed Nvidia and Tesla?",
-        "The company also raised its dividend.",
-    ]
-    df = resolve_anaphora(22, sentences, TICKER, use_anaphora_fallback=True)
-
-    # The question's own flag still fires.
-    assert df.iloc[1]["mentions_target"] == True
-
-    # But it must not become the antecedent: the following "The company..."
-    # sentence has nothing to inherit and stays untagged. (Before other-company
-    # detection was removed this asserted the antecedent was still Ford; the
-    # rule under test -- a question never anchors -- is the same either way.)
-    assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == False
-
-
-def test_sentence_initial_it_resolves_but_midsentence_it_does_not():
-    # Bare "it" was demoted from GENERIC_ANAPHORA to a case-sensitive
-    # sentence-initial pattern: "It also raised..." is genuinely anaphoric,
-    # "analysts said it was hard to believe" is not.
-    sentences = [
-        "Tesla posted record deliveries.",
-        "It also raised guidance for the year.",
-        "Analysts said it was hard to believe the results.",
-    ]
-    df = resolve_anaphora(23, sentences, TICKER, use_anaphora_fallback=True)
-
-    assert df.iloc[1]["mentions_target"] == True
-    assert df.iloc[1]["resolved_by_anaphora"] == True
-
-    assert df.iloc[2]["mentions_target"] == False
-    assert df.iloc[2]["resolved_by_anaphora"] == False
+    assert row["resolved_by_coref"] == False
 
 
 def test_flag_boilerplate():
@@ -174,90 +85,11 @@ def test_ticker_substring_traps(sentence):
     assert tsla_df.iloc[0]["mentions_target"] == False
 
 
-def test_anaphora_decays_after_max_gap():
-    # Long-article regression: an explicit mention many sentences back should
-    # stop being attributed to generic anaphora once ANAPHORA_MAX_GAP is
-    # exceeded, instead of drifting onto unrelated later content (the
-    # dominant error mode found in the sentences.parquet hand-check --
-    # see notebooks/a_entity_sentiment.ipynb section 4.3).
-    from stock_predictor.config import ANAPHORA_MAX_GAP
-
-    filler = [f"This is unrelated filler sentence number {i} about the weather." for i in range(ANAPHORA_MAX_GAP - 1)]
-    sentences = ["Tesla delivered record numbers this quarter.", *filler, "The company said demand was strong."]
-    df = resolve_anaphora(6, sentences, TICKER, use_anaphora_fallback=True)
-
-    # Sentence just inside the gap (gap == ANAPHORA_MAX_GAP) still resolves.
-    assert df.iloc[-1]["mentions_target"] == True
-    assert df.iloc[-1]["resolved_by_anaphora"] == True
-
-    # One sentence further out, the antecedent has decayed.
-    sentences_too_far = sentences + ["The firm reported strong results."]
-    df2 = resolve_anaphora(6, sentences_too_far, TICKER, use_anaphora_fallback=True)
-    last = df2.iloc[-1]
-    assert last["mentions_target"] == False
-    assert last["resolved_by_anaphora"] == False
-
-
-# ---------------------------------------------------------------------------
-# USE_ANAPHORA_FALLBACK: the recency heuristic defaults OFF.
-#
-# A context-aware audit of 100 anaphora-resolved sentences (auditor saw a
-# 6-sentence window, judged determinate in 99% of rows) found the heuristic
-# correct on only 13 of 100 -- coreference scored 74% on the equivalent
-# sample -- so the default leaves those sentences untagged rather than
-# guessing. The capability stays behind the flag rather than being deleted.
-# ---------------------------------------------------------------------------
-
-
-def test_anaphora_fallback_default_leaves_13pct_precision_heuristic_off():
-    sentences = [
-        "Tesla delivered record numbers this quarter.",
-        "The company also raised prices.",
-    ]
-    # Default: config.USE_ANAPHORA_FALLBACK (False) -- no keyword passed.
-    df = resolve_anaphora(70, sentences, TICKER)
-
-    row = df.iloc[1]
-    assert row["mentions_target"] == False
-    assert row["resolved_by_anaphora"] == False
-    assert pd.isna(row["anaphor_char_start"])
-    assert pd.isna(row["anaphor_char_end"])
-
-    # With the flag explicitly re-enabled, the old behaviour returns.
-    df_on = resolve_anaphora(70, sentences, TICKER, use_anaphora_fallback=True)
-    row_on = df_on.iloc[1]
-    assert row_on["mentions_target"] == True
-    assert row_on["resolved_by_anaphora"] == True
-
-
-def test_anaphora_fallback_off_does_not_regress_explicit_or_coref_paths():
-    # Precedence 1 (explicit) and precedence 2 (coref) must tag normally with
-    # the fallback OFF -- this is the thing that must not regress when the
-    # heuristic (precedence 3) is disabled by default.
-    text = "Tesla delivered record numbers. The company also raised prices."
-    spans = split_sentences([text], return_spans=True)[0]
-    assert len(spans) == 2
-
-    # Explicit mention: unaffected by the flag either way.
-    explicit_off = tag_sentences(71, spans, TICKER, use_anaphora_fallback=False)
-    assert explicit_off.iloc[0]["mentions_target"] == True
-    assert explicit_off.iloc[0]["resolved_by_anaphora"] == False
-
-    # Coref-resolved sentence: still tags normally with the heuristic OFF,
-    # since coref never falls through to the gated block at all.
-    coref_start = text.index("The company")
-    mentions = [(0, 5, "TARGET"), (coref_start, coref_start + len("The company"), "TARGET")]
-    coref_off = tag_sentences(72, spans, TICKER, coref_mentions=mentions, use_anaphora_fallback=False)
-    assert coref_off.iloc[1]["mentions_target"] == True
-    assert coref_off.iloc[1]["resolved_by_coref"] == True
-    assert coref_off.iloc[1]["resolved_by_anaphora"] == False
-
-
 def test_mentions_ceo_independent_of_mentions_target():
     # Design decision (documented in entity_filter.tag_sentences docstring):
     # person-tier aliases are ambiguous (e.g. "Musk" could mean SpaceX/X), so
     # mentions_ceo is tracked independently and never sets mentions_target on
-    # its own. A sentence with "Musk" but no unambiguous/anaphoric Tesla
+    # its own. A sentence with "Musk" but no unambiguous/referring Tesla
     # alias should have mentions_ceo=True and mentions_target=False.
     df = tag_sentences(5, ["Musk unveiled a new product at the event."], TICKER)
     row = df.iloc[0]
@@ -316,20 +148,18 @@ def test_split_sentences_fixes_missing_space_after_period(nlp):
 # ---------------------------------------------------------------------------
 
 
-def test_coref_unavailable_falls_back_to_heuristic(monkeypatch):
+def test_coref_unavailable_tags_explicit_names_only(monkeypatch):
     # Graceful degradation: with the backend reporting itself unavailable,
-    # process_articles must still run to completion and produce exactly the
-    # heuristic's tags (no exception, no coref-resolved rows). The heuristic
-    # itself defaults OFF (config.USE_ANAPHORA_FALLBACK), so this test -- which
-    # is specifically about the fallback mechanism -- must opt back into it
-    # explicitly to observe resolved_by_anaphora firing at all.
+    # process_articles must still run to completion -- no exception, and no
+    # coref-resolved rows -- producing exactly the tags explicit alias matching
+    # gives on its own.
     monkeypatch.setattr(coref, "is_available", lambda: False)
 
-    out = process_articles(COREF_CORPUS, TICKER, use_coref=True, use_anaphora_fallback=True)
-    baseline = process_articles(COREF_CORPUS, TICKER, use_coref=False, use_anaphora_fallback=True)
+    out = process_articles(COREF_CORPUS, TICKER, use_coref=True)
+    baseline = process_articles(COREF_CORPUS, TICKER, use_coref=False)
 
     assert not out["resolved_by_coref"].any()
-    assert out["resolved_by_anaphora"].any()
+    assert out["mentions_target"].any()
     pd.testing.assert_frame_equal(out, baseline)
 
 
@@ -340,7 +170,7 @@ def test_coref_mentions_only_fill_unnamed_sentences():
     text = "Tesla delivered record numbers. The company also raised prices."
     spans = split_sentences([text], return_spans=True)[0]
     assert len(spans) == 2
-    # Hand-built cluster: the explicit "Tesla" plus the anaphor "The company".
+    # Hand-built cluster: the explicit "Tesla" plus the mention "The company".
     mentions = [(0, 5, "TARGET"), (text.index("The company"), text.index("The company") + 11, "TARGET")]
 
     df = tag_sentences(50, spans, TICKER, coref_mentions=mentions)
@@ -349,25 +179,29 @@ def test_coref_mentions_only_fill_unnamed_sentences():
     assert df.iloc[0]["resolved_by_coref"] == False
     assert df.iloc[1]["mentions_target"] == True
     assert df.iloc[1]["resolved_by_coref"] == True
-    assert df.iloc[1]["resolved_by_anaphora"] == False
     assert df.iloc[1]["text"][
-        int(df.iloc[1]["anaphor_char_start"]) : int(df.iloc[1]["anaphor_char_end"])
+        int(df.iloc[1]["mention_char_start"]) : int(df.iloc[1]["mention_char_end"])
     ] == "The company"
 
 
-def test_anaphor_spans_are_within_sentence():
-    # Both mechanisms record the resolved mention's span relative to the row's
-    # own text. Heuristic path here (no model needed); the coref path is covered
-    # by the slow test below. The heuristic is opted into explicitly since it
-    # defaults off (config.USE_ANAPHORA_FALLBACK).
-    out = process_articles(COREF_CORPUS, TICKER, use_coref=False, use_anaphora_fallback=True)
-    resolved = out[out["anaphor_char_start"].notna()]
+def test_mention_spans_are_within_sentence():
+    # The resolved mention's span is recorded relative to the row's OWN text,
+    # which is what absa.py slices to inject the company name. Hand-built
+    # mentions here so no model is needed; the real backend is covered by the
+    # slow test below.
+    text = "Tesla delivered record numbers. The company also raised prices."
+    spans = split_sentences([text], return_spans=True)[0]
+    start = text.index("The company")
+    mentions = [(0, 5, "TARGET"), (start, start + len("The company"), "TARGET")]
+
+    out = tag_sentences(60, spans, TICKER, coref_mentions=mentions)
+    resolved = out[out["mention_char_start"].notna()]
     assert len(resolved) > 0
 
     for _, row in resolved.iterrows():
-        start, end = int(row["anaphor_char_start"]), int(row["anaphor_char_end"])
-        assert 0 <= start < end <= len(row["text"])
-        mention = row["text"][start:end]
+        s_, e_ = int(row["mention_char_start"]), int(row["mention_char_end"])
+        assert 0 <= s_ < e_ <= len(row["text"])
+        mention = row["text"][s_:e_]
         assert mention
         assert mention == mention.strip()
 
@@ -376,9 +210,9 @@ def test_span_columns_are_nullable_int():
     # Schema stability: the columns must be Int64 whether or not anything was
     # resolved, so downstream reads do not see object/float64 by accident.
     out = process_articles(COREF_CORPUS, TICKER, use_coref=False)
-    assert str(out["anaphor_char_start"].dtype) == "Int64"
-    assert str(out["anaphor_char_end"].dtype) == "Int64"
-    assert out["anaphor_char_start"].isna().any()
+    assert str(out["mention_char_start"].dtype) == "Int64"
+    assert str(out["mention_char_end"].dtype) == "Int64"
+    assert out["mention_char_start"].isna().any()
 
 
 def test_needs_score_unaffected_by_new_columns():
@@ -412,12 +246,6 @@ def test_explicit_mention_beats_coref():
     explicit = out[out["text"].str.contains("Tesla")]
     assert len(explicit) > 0
     assert not explicit["resolved_by_coref"].any()
-
-
-@pytest.mark.slow
-def test_coref_and_heuristic_flags_mutually_exclusive():
-    out = process_articles(COREF_CORPUS, TICKER, use_coref=True)
-    assert int((out["resolved_by_coref"] & out["resolved_by_anaphora"]).sum()) == 0
 
 
 def test_person_chain_does_not_key_to_target():
@@ -623,54 +451,19 @@ def test_coref_corrupt_cache_is_treated_as_empty(tmp_path, spy_model):
 
 
 @pytest.mark.slow
-def test_coref_anaphor_spans_are_within_sentence():
+def test_coref_mention_spans_are_within_sentence():
     out = process_articles(COREF_CORPUS, TICKER, use_coref=True)
-    rows = out[out["resolved_by_coref"] & out["anaphor_char_start"].notna()]
+    rows = out[out["resolved_by_coref"] & out["mention_char_start"].notna()]
     for _, row in rows.iterrows():
-        start, end = int(row["anaphor_char_start"]), int(row["anaphor_char_end"])
+        start, end = int(row["mention_char_start"]), int(row["mention_char_end"])
         assert 0 <= start < end <= len(row["text"])
         mention = row["text"][start:end]
         assert mention and mention == mention.strip()
 
 
 # ---------------------------------------------------------------------------
-# Expletive "It" (dummy subject) is not an anaphor
+# Expletive "It" (dummy subject) is not an mention
 # ---------------------------------------------------------------------------
-
-
-def test_expletive_it_is_not_resolved_by_the_sentence_initial_rule():
-    # "It's no coincidence that ..." has a DUMMY subject: the "It" refers to
-    # nothing, so the sentence is about no company at all. Before this, the
-    # sentence-initial "It" rule handed it to the last-named company and the
-    # ABSA substitution turned it into "Tesla's no coincidence that ...".
-    text = (
-        "Tesla delivered record numbers this quarter. "
-        "It's no coincidence that both of these models have starting prices "
-        "under $50,000."
-    )
-    spans = split_sentences([text], return_spans=True)[0]
-    # use_anaphora_fallback=True: this test is specifically about the
-    # sentence-initial "It" rule inside the heuristic, which defaults off
-    # (config.USE_ANAPHORA_FALLBACK) and must be opted into to observe it.
-    df = tag_sentences(60, spans, TICKER, use_anaphora_fallback=True)
-
-    assert df.iloc[0]["mentions_target"] == True
-    row = df.iloc[1]
-    assert row["mentions_target"] == False
-    assert row["resolved_by_anaphora"] == False
-    assert pd.isna(row["anaphor_char_start"])
-
-    # Control: a genuinely referential sentence-initial "It" in the same
-    # position still resolves.
-    ok = (
-        "Tesla delivered record numbers this quarter. "
-        "It expects deliveries to keep climbing next year."
-    )
-    ok_df = tag_sentences(
-        61, split_sentences([ok], return_spans=True)[0], TICKER, use_anaphora_fallback=True
-    )
-    assert ok_df.iloc[1]["mentions_target"] == True
-    assert ok_df.iloc[1]["resolved_by_anaphora"] == True
 
 
 def test_expletive_coref_mention_sets_no_tag_and_no_span():
@@ -689,42 +482,25 @@ def test_expletive_coref_mention_sets_no_tag_and_no_span():
 
     assert df.iloc[1]["mentions_target"] == False
     assert df.iloc[1]["resolved_by_coref"] == False
-    assert pd.isna(df.iloc[1]["anaphor_char_start"])
+    assert pd.isna(df.iloc[1]["mention_char_start"])
 
 
-def test_expletive_detection_prefers_the_parse():
-    # The parse is authoritative when it is available: an extraposed
-    # "It is <adj/NP> that/to ..." is expletive, a plain referential "It" is not,
-    # and the surface regex is not consulted for either.
+def test_expletive_detection_reads_the_parse():
+    # An extraposed "It is <adj/NP> that/to ..." is a dummy subject; a plain
+    # referential "It" is not. The distinction is structural, so it is read off
+    # the dependency parse rather than pattern-matched on the surface.
     nlp = _entity_filter._get_nlp()
     expletive = "It's no coincidence that both of these models are cheap."
     referential = "It expects deliveries to keep climbing next year."
-    assert _entity_filter._is_expletive_mention(nlp(expletive), 0, 2, expletive, 0) is True
-    assert _entity_filter._is_expletive_mention(nlp(referential), 0, 2, referential, 0) is False
+    assert _entity_filter._is_expletive_mention(nlp(expletive), 0, 2) is True
+    assert _entity_filter._is_expletive_mention(nlp(referential), 0, 2) is False
 
 
-def test_expletive_regex_fallback_when_no_parse_is_available():
-    # doc=None is the no-parse path (a caller with strings and a parser-less
-    # pipeline). The conservative regex requires sentence-initial "It"/"It's",
-    # a form of "be", a short phrase and an extraposed "that"/"to" clause.
-    fire = [
-        "It's no coincidence that both of these models are cheap.",
-        "It is important to note that shares fell.",
-        "It is clear that demand fell.",
-    ]
-    hold = [
-        "It's a good quarter for the company.",
-        "It expects deliveries to keep climbing next year.",
-        "Its revenue increased 16% year over year.",
-    ]
-    for text in fire:
-        assert _entity_filter._is_expletive_mention(None, 0, 2, text, 0) is True, text
-    for text in hold:
-        assert _entity_filter._is_expletive_mention(None, 0, 2, text, 0) is False, text
-    # The pattern is anchored at the start of the sentence, so it says nothing
-    # about a mid-sentence mention.
-    mid = "Analysts said it is clear that demand fell."
-    assert _entity_filter._is_expletive_mention(None, 15, 17, mid, 15) is False
+def test_expletive_detection_without_a_parse_is_not_an_expletive():
+    # Fail-open on a doc with no dependency annotation: without the parse there
+    # is no evidence of extraposition, and guessing from the surface is what the
+    # removed regex fallback did. No parse means the mention is left alone.
+    assert _entity_filter._is_expletive_mention(None, 0, 2) is False
 
 
 def test_person_denoting_title_np_does_not_key_a_cluster():
@@ -742,8 +518,8 @@ def test_person_denoting_title_np_does_not_key_a_cluster():
 
 
 # ---------------------------------------------------------------------------
-# is_substitutable_anaphor: the span selected for ABSA injection must be a
-# recognisable company anaphor, never an arbitrary piece of a coref chain.
+# is_substitutable_mention: the span selected for ABSA injection must be a
+# recognisable company mention, never an arbitrary piece of a coref chain.
 # ---------------------------------------------------------------------------
 
 
@@ -756,8 +532,8 @@ def test_person_denoting_title_np_does_not_key_a_cluster():
         "the electric vehicle (ev) maker", "The Company", "the automaker's",
     ],
 )
-def test_is_substitutable_anaphor_allows_real_company_anaphors(surface):
-    assert _entity_filter.is_substitutable_anaphor(surface) is True
+def test_is_substitutable_mention_allows_real_company_mentions(surface):
+    assert _entity_filter.is_substitutable_mention(surface) is True
 
 
 @pytest.mark.parametrize(
@@ -765,7 +541,7 @@ def test_is_substitutable_anaphor_allows_real_company_anaphors(surface):
     [
         # PERSON pronouns -- simply absent from the closed class, deliberately.
         "he", "she", "I", "you", "his company",
-        # First-person plural: removed from _ANAPHORIC_PRONOUNS. In news prose
+        # First-person plural: removed from _MENTION_PRONOUNS. In news prose
         # a "we"/"our" is almost always inside a quote from a PERSON, not the
         # company speaking in its own voice -- a context-aware audit found 10
         # corpus substitutions produced subject-verb disagreement this way
@@ -792,26 +568,26 @@ def test_is_substitutable_anaphor_allows_real_company_anaphors(surface):
         "",
     ],
 )
-def test_is_substitutable_anaphor_rejects_non_company_surfaces(surface):
-    assert _entity_filter.is_substitutable_anaphor(surface) is False
+def test_is_substitutable_mention_rejects_non_company_surfaces(surface):
+    assert _entity_filter.is_substitutable_mention(surface) is False
 
 
-def test_is_substitutable_anaphor_rejects_none():
-    assert _entity_filter.is_substitutable_anaphor(None) is False
+def test_is_substitutable_mention_rejects_none():
+    assert _entity_filter.is_substitutable_mention(None) is False
 
 
-def test_is_substitutable_anaphor_rejects_first_person_plural():
-    # First-person plural is no longer treated as company anaphora -- see
-    # _ANAPHORIC_PRONOUNS. In news prose "we"/"our" is almost always inside a
+def test_is_substitutable_mention_rejects_first_person_plural():
+    # First-person plural is no longer treated as a company mention -- see
+    # _MENTION_PRONOUNS. In news prose "we"/"our" is almost always inside a
     # quote from a PERSON, not the company speaking in its own voice.
-    assert _entity_filter.is_substitutable_anaphor("we") is False
-    assert _entity_filter.is_substitutable_anaphor("our") is False
-    assert _entity_filter.is_substitutable_anaphor("us") is False
-    assert _entity_filter.is_substitutable_anaphor("ours") is False
-    assert _entity_filter.is_substitutable_anaphor("we're") is False
+    assert _entity_filter.is_substitutable_mention("we") is False
+    assert _entity_filter.is_substitutable_mention("our") is False
+    assert _entity_filter.is_substitutable_mention("us") is False
+    assert _entity_filter.is_substitutable_mention("ours") is False
+    assert _entity_filter.is_substitutable_mention("we're") is False
 
 
-def test_is_substitutable_anaphor_rejects_registry_product_names():
+def test_is_substitutable_mention_rejects_registry_product_names():
     # PRODUCT_KEYS is the union of every COMPANIES entry's "products" tier
     # (see entity_filter._build_product_keys()). A product name is never the
     # company itself, no matter whose product it is, so every one of them must
@@ -819,12 +595,12 @@ def test_is_substitutable_anaphor_rejects_registry_product_names():
     # shaped like a bare company head noun, so on the live registry these are
     # all caught by the head-noun check upstream of the PRODUCT_KEYS test.
     for product_key in _entity_filter.PRODUCT_KEYS:
-        assert _entity_filter.is_substitutable_anaphor(product_key) is False
+        assert _entity_filter.is_substitutable_mention(product_key) is False
     assert "fsd" in _entity_filter.PRODUCT_KEYS
     assert "robotaxi" in _entity_filter.PRODUCT_KEYS
 
 
-def test_is_substitutable_anaphor_product_key_check_itself(monkeypatch):
+def test_is_substitutable_mention_product_key_check_itself(monkeypatch):
     # Isolate the PRODUCT_KEYS branch specifically: a surface that WOULD
     # otherwise pass every other test (a determiner + a valid company head
     # noun) must still be rejected when that exact phrase is itself a
@@ -832,9 +608,9 @@ def test_is_substitutable_anaphor_product_key_check_itself(monkeypatch):
     # company head noun this way, so this test manufactures one rather than
     # leaving the branch unexercised.
     monkeypatch.setattr(_entity_filter, "PRODUCT_KEYS", frozenset({"the stock"}))
-    assert _entity_filter.is_substitutable_anaphor("the stock") is False
+    assert _entity_filter.is_substitutable_mention("the stock") is False
     # An unrelated determiner+head-noun phrase is unaffected.
-    assert _entity_filter.is_substitutable_anaphor("the company") is True
+    assert _entity_filter.is_substitutable_mention("the company") is True
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +619,7 @@ def test_is_substitutable_anaphor_product_key_check_itself(monkeypatch):
 
 
 def test_coref_hits_prefers_a_later_pronoun_over_an_earlier_junk_mention():
-    # A sentence containing both a junk (non-anaphoric) surface EARLY and a
+    # A sentence containing both a junk (non-referring) surface EARLY and a
     # good pronoun LATER must select the PRONOUN's span, not the junk one --
     # strictly better than filtering only after the fact in absa.py, since the
     # earlier mechanism would otherwise have already thrown the good pronoun

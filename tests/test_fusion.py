@@ -288,13 +288,15 @@ def test_conf_graft_floor_preserves_absa_sign_and_propagates_nan():
     assert np.isnan(out["conf_graft_floor"].iloc[3])
 
 
-def test_conf_graft_floor_is_aggregated_but_does_not_displace_the_others():
-    # Switching the shipped scoring must not invalidate the record it was
-    # chosen against: the article-level features backing every earlier
-    # measurement have to stay computable from the same call.
-    assert "conf_graft_floor" in AGGREGATED_VARIANTS
-    assert "conf_graft" in AGGREGATED_VARIANTS
-    assert "conf_graft_soft" in AGGREGATED_VARIANTS
+def test_only_the_shipped_variant_is_aggregated_to_article_level():
+    """The earlier variants stay computable per sentence so old measurements
+    remain reproducible, but they are not carried into the feature table: they
+    are the same formula at a different floor and correlate at r ~= 0.9, so
+    promoting all three spent twelve columns restating one number."""
+    assert AGGREGATED_VARIANTS == ("conf_graft_floor",)
+    for kept in ("conf_graft", "conf_graft_soft", "sign_graft"):
+        assert kept in VARIANTS, f"{kept} must remain available per sentence"
+        assert kept not in AGGREGATED_VARIANTS
 
 
 def test_conf_graft_equals_sign_graft_scaled_by_absa_confidence():
@@ -494,11 +496,11 @@ def test_top3_neg_is_not_diluted_by_neutral_filler():
     # The dilution problem, demonstrated: B's mean is LESS negative (or even
     # positive) than A's mean, even though B contains the stronger negative
     # message.
-    assert result.loc["B", "fus_conf_graft_mean"] > result.loc["A", "fus_conf_graft_mean"]
+    assert result.loc["B", "fus_conf_graft_floor_mean"] > result.loc["A", "fus_conf_graft_floor_mean"]
 
     # _top3_neg correctly ranks B as more negative than A -- it reads B's
     # strongly-negative tail instead of being diluted by B's filler.
-    assert result.loc["B", "fus_conf_graft_top3_neg"] < result.loc["A", "fus_conf_graft_top3_neg"]
+    assert result.loc["B", "fus_conf_graft_floor_top3_neg"] < result.loc["A", "fus_conf_graft_floor_top3_neg"]
 
 
 def test_fewer_than_three_population_sentences_averages_what_exists():
@@ -512,12 +514,12 @@ def test_fewer_than_three_population_sentences_averages_what_exists():
     row = result.loc["C"]
 
     variants = score_variants(df)
-    expected_mean = variants["conf_graft"].mean()
-    assert row["fus_conf_graft_mean"] == pytest.approx(expected_mean)
+    expected_mean = variants["conf_graft_floor"].mean()
+    assert row["fus_conf_graft_floor_mean"] == pytest.approx(expected_mean)
     # Only 2 rows exist -- top3_pos/top3_neg average both of them (not padded,
     # not NaN just because there weren't 3).
-    assert row["fus_conf_graft_top3_pos"] == pytest.approx(expected_mean)
-    assert row["fus_conf_graft_top3_neg"] == pytest.approx(expected_mean)
+    assert row["fus_conf_graft_floor_top3_pos"] == pytest.approx(expected_mean)
+    assert row["fus_conf_graft_floor_top3_neg"] == pytest.approx(expected_mean)
 
 
 def test_empty_population_gives_nan_not_zero_for_all_four_stats():
@@ -532,7 +534,12 @@ def test_empty_population_gives_nan_not_zero_for_all_four_stats():
     for variant in AGGREGATED_VARIANTS:
         for agg in FUSION_AGGREGATIONS:
             val = row[f"fus_{variant}_{agg}"]
-            assert pd.isna(val), f"fus_{variant}_{agg} should be NaN on empty population, got {val!r}"
+            if agg == "lead":
+                # Documented exception: an article that never mentions the target
+                # early delivered no early sentiment, which is a measurement.
+                assert val == 0.0, f"fus_{variant}_lead should be 0.0, got {val!r}"
+            else:
+                assert pd.isna(val), f"fus_{variant}_{agg} should be NaN, got {val!r}"
 
 
 def test_top3_pos_on_all_negative_article_returns_mean_of_least_negative_not_nan():
@@ -548,15 +555,15 @@ def test_top3_pos_on_all_negative_article_returns_mean_of_least_negative_not_nan
     row = result.loc["E"]
 
     variants = score_variants(df)
-    conf_graft = variants["conf_graft"]
+    conf_graft = variants["conf_graft_floor"]
     expected_top3_pos = conf_graft.nlargest(3).mean()
 
-    assert not pd.isna(row["fus_conf_graft_top3_pos"])
-    assert row["fus_conf_graft_top3_pos"] == pytest.approx(expected_top3_pos)
-    assert row["fus_conf_graft_top3_pos"] < 0  # still negative -- article IS all-negative
+    assert not pd.isna(row["fus_conf_graft_floor_top3_pos"])
+    assert row["fus_conf_graft_floor_top3_pos"] == pytest.approx(expected_top3_pos)
+    assert row["fus_conf_graft_floor_top3_pos"] < 0  # still negative -- article IS all-negative
     # It is the LEAST-negative of the four, i.e. greater than the plain mean
     # (closer to zero), not equal to the most-negative single value.
-    assert row["fus_conf_graft_top3_pos"] > conf_graft.min()
+    assert row["fus_conf_graft_floor_top3_pos"] > conf_graft.min()
 
 
 def test_lead_respects_lead_sentence_window_and_ignores_later_sentences():
@@ -574,12 +581,16 @@ def test_lead_respects_lead_sentence_window_and_ignores_later_sentences():
     row = result.loc["F"]
 
     variants = score_variants(df)
-    lead_only_expected = variants["conf_graft"].iloc[0]  # only the sent_idx=0 row
-    assert row["fus_conf_graft_lead"] == pytest.approx(lead_only_expected)
-    assert row["fus_conf_graft_lead"] > 0  # positive lead sentence, not diluted by the later negative one
+    lead_only_expected = variants["conf_graft_floor"].iloc[0]  # only the sent_idx=0 row
+    assert row["fus_conf_graft_floor_lead"] == pytest.approx(lead_only_expected)
+    assert row["fus_conf_graft_floor_lead"] > 0  # positive lead sentence, not diluted by the later negative one
 
 
-def test_lead_is_nan_when_no_lead_window_target_sentences():
+def test_lead_is_zero_not_nan_when_no_lead_window_target_sentences():
+    """The one deliberate exception to NaN-over-zero. _lead measures how much
+    sentiment an article delivers EARLY, so an article that never mentions the
+    target in its opening window delivered none, and 0.0 is that measurement
+    rather than a missing one. See aggregate_fusion_features()."""
     df = pd.DataFrame(
         [
             _fus_row(
@@ -588,7 +599,10 @@ def test_lead_is_nan_when_no_lead_window_target_sentences():
         ]
     )
     result = aggregate_fusion_features(df).set_index("article_id")
-    assert pd.isna(result.loc["G", "fus_conf_graft_lead"])
+    assert result.loc["G", "fus_conf_graft_floor_lead"] == 0.0
+    # The other aggregations, which have no such exception, stay NaN-free here
+    # because the article does have a target sentence, just not an early one.
+    assert not pd.isna(result.loc["G", "fus_conf_graft_floor_mean"])
 
 
 def test_boilerplate_and_non_target_sentences_excluded_from_population():
@@ -607,10 +621,10 @@ def test_boilerplate_and_non_target_sentences_excluded_from_population():
     row = result.loc["H"]
 
     only_row = df.iloc[[0]]
-    expected = score_variants(only_row)["conf_graft"].iloc[0]
-    assert row["fus_conf_graft_mean"] == pytest.approx(expected)
-    assert row["fus_conf_graft_top3_pos"] == pytest.approx(expected)
-    assert row["fus_conf_graft_top3_neg"] == pytest.approx(expected)
+    expected = score_variants(only_row)["conf_graft_floor"].iloc[0]
+    assert row["fus_conf_graft_floor_mean"] == pytest.approx(expected)
+    assert row["fus_conf_graft_floor_top3_pos"] == pytest.approx(expected)
+    assert row["fus_conf_graft_floor_top3_neg"] == pytest.approx(expected)
 
 
 def test_median_is_robust_to_a_single_extreme_sentence():
@@ -637,13 +651,13 @@ def test_median_is_robust_to_a_single_extreme_sentence():
     row = result.loc["I"]
 
     variants = score_variants(df)
-    conf_graft = variants["conf_graft"]
-    assert row["fus_conf_graft_mean"] == pytest.approx(conf_graft.mean())
-    assert row["fus_conf_graft_median"] == pytest.approx(conf_graft.median())
+    conf_graft = variants["conf_graft_floor"]
+    assert row["fus_conf_graft_floor_mean"] == pytest.approx(conf_graft.mean())
+    assert row["fus_conf_graft_floor_median"] == pytest.approx(conf_graft.median())
 
     # The point: mean and median disagree on SIGN.
-    assert row["fus_conf_graft_mean"] < 0
-    assert row["fus_conf_graft_median"] > 0
+    assert row["fus_conf_graft_floor_mean"] < 0
+    assert row["fus_conf_graft_floor_median"] > 0
 
 
 def test_spread_separates_contested_from_quiet_articles():
@@ -676,11 +690,11 @@ def test_spread_separates_contested_from_quiet_articles():
     quiet_row = result.loc["K"]
 
     # Means are close -- a mean-only view could not tell these apart.
-    assert contested_row["fus_conf_graft_mean"] == pytest.approx(
-        quiet_row["fus_conf_graft_mean"], abs=0.05
+    assert contested_row["fus_conf_graft_floor_mean"] == pytest.approx(
+        quiet_row["fus_conf_graft_floor_mean"], abs=0.05
     )
     # Spreads are far apart -- spread makes the distinction the mean cannot.
-    assert contested_row["fus_conf_graft_spread"] > quiet_row["fus_conf_graft_spread"] + 0.5
+    assert contested_row["fus_conf_graft_floor_spread"] > quiet_row["fus_conf_graft_floor_spread"] + 0.5
 
 
 def test_spread_is_zero_for_single_sentence_population():
@@ -693,9 +707,9 @@ def test_spread_is_zero_for_single_sentence_population():
     row = result.loc["L"]
     # A single-sentence population: top3_pos and top3_neg both equal that
     # one score, so their difference is exactly 0.0, not NaN.
-    assert row["fus_conf_graft_top3_pos"] == pytest.approx(row["fus_conf_graft_top3_neg"])
-    assert row["fus_conf_graft_spread"] == pytest.approx(0.0)
-    assert not pd.isna(row["fus_conf_graft_spread"])
+    assert row["fus_conf_graft_floor_top3_pos"] == pytest.approx(row["fus_conf_graft_floor_top3_neg"])
+    assert row["fus_conf_graft_floor_spread"] == pytest.approx(0.0)
+    assert not pd.isna(row["fus_conf_graft_floor_spread"])
 
 
 def test_spread_and_median_are_nan_on_empty_population():
@@ -768,26 +782,27 @@ def _prov_row(
         is_boilerplate=is_boilerplate,
     )
     row["resolved_by_coref"] = channel in ("coref_span", "coref_nospan")
-    row["resolved_by_anaphora"] = channel == "anaphora"
-    row["anaphor_char_start"] = 3 if channel == "coref_span" else None
-    row["anaphor_char_end"] = 8 if channel == "coref_span" else None
+    row["mention_char_start"] = 3 if channel == "coref_span" else None
+    row["mention_char_end"] = 8 if channel == "coref_span" else None
     return row
 
 
-def test_provenance_channel_labels_each_mechanism():
+def test_provenance_channel_labels_each_route():
+    """The three routes a sentence can take into the target population: it named
+    the company, or coref resolved it with a substitutable span, or coref
+    resolved it without one. The span/no-span split is the point -- the two are
+    audited at very different accuracy."""
     df = _frame(
         [
             _prov_row("A", 0, "surface"),
             _prov_row("A", 1, "coref_span"),
             _prov_row("A", 2, "coref_nospan"),
-            _prov_row("A", 3, "anaphora"),
         ]
     )
     assert provenance_channel(df).tolist() == [
         "surface",
         "coref_span",
         "coref_nospan",
-        "anaphora",
     ]
 
 
@@ -813,15 +828,14 @@ def test_channels_partition_the_target_population():
             _prov_row("A", 1, "coref_span"),
             _prov_row("A", 2, "coref_span"),
             _prov_row("A", 3, "coref_nospan"),
-            _prov_row("A", 4, "anaphora"),
-            _prov_row("A", 5, "surface", is_boilerplate=True),  # excluded
-            _prov_row("A", 6, "surface", mentions_target=False),  # excluded
+            _prov_row("A", 4, "surface", is_boilerplate=True),  # excluded
+            _prov_row("A", 5, "surface", mentions_target=False),  # excluded
         ]
     )
     row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
     counts = [row[f"prov_{c}_n"] for c in PROVENANCE_CHANNELS]
-    assert counts == [1, 2, 1, 1]
-    assert sum(counts) == 5
+    assert counts == [1, 2, 1]
+    assert sum(counts) == 4
     assert sum(row[f"prov_{c}_share"] for c in PROVENANCE_CHANNELS) == pytest.approx(1.0)
 
 
@@ -836,7 +850,7 @@ def test_provenance_does_not_change_the_blended_fusion_features():
         ]
     )
     plain = df.drop(
-        columns=["resolved_by_coref", "resolved_by_anaphora", "anaphor_char_start", "anaphor_char_end"]
+        columns=["resolved_by_coref", "resolved_by_coref", "mention_char_start", "mention_char_end"]
     )
     with_provenance = aggregate_fusion_features(df).set_index("article_id")
     without = aggregate_fusion_features(plain).set_index("article_id")
@@ -869,8 +883,8 @@ def test_channel_means_are_computed_over_only_that_channels_sentences():
     )
     row = aggregate_provenance_features(df).set_index("article_id").loc["A"]
     # conf_graft = absa * |fin|: surface = +1.0 * 0.9, coref_nospan = -1.0 * 0.9
-    assert row["prov_surface_conf_graft_mean"] == pytest.approx(0.9)
-    assert row["prov_coref_nospan_conf_graft_mean"] == pytest.approx(-0.9)
+    assert row["prov_surface_conf_graft_floor_mean"] == pytest.approx(0.9)
+    assert row["prov_coref_nospan_conf_graft_floor_mean"] == pytest.approx(-0.9)
 
 
 def test_empty_channel_is_nan_for_sentiment_and_zero_for_count():

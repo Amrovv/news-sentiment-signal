@@ -1,13 +1,10 @@
 # Data
 
-# Intermediate artifacts: model caches and pre-run snapshots. All are
-# regenerable from data/processed + the pipeline, and they are large (~20MB
-# together, dominated by the sentence-table snapshots the notebooks take before
-# overwriting their outputs). The caches are worth KEEPING ON DISK -- a cold
-# run without them is ~20 minutes of CPU inference -- they just should not be
-# in git history. The final outputs (data/sentences.parquet,
-# data/articles.parquet) stay tracked.
-data/interim/*.parquet
+# Everything under data/interim/: the model caches, the pipeline's phase outputs
+# and the 506MB processed article table. All regenerable, none belongs in git.
+# Keep the caches on disk though: a cold run costs ~5h, almost all of it the
+# coreference judge. The deliverable, data/processed/pipeline_run/, stays tracked.
+data/interim/
 
 
 # Mac OS-specific storage files
@@ -204,29 +201,17 @@ person_A_guide.md
 person_B_guide.md 
 project_overview.md  
 
-# Large processed parquet snapshots (only the best run is tracked)
-data/processed/processed_articles.parquet
-data/processed/processed_articles_2nd.parquet
-data/processed/processed_articles_origin.parquet
-data/processed/processed_articles_best.parquet
+# Large processed parquet snapshots. The live one moved to data/interim/, but
+# keep these so an older tree or a re-run cannot commit one by accident.
+data/processed/processed_articles*.parquet
 
 # Secrets -- never commit. config.py reads FINNHUB_API_KEY from here via python-dotenv.
 .env
 .env.*
 !.env.example
 
-# Local model weights -- multi-GB GGUF/checkpoint files, fetched not authored.
-# JUDGE_MODEL_PATH points here; notebook 2.7 records how to re-fetch.
+# Local model weights: multi-GB GGUF and checkpoint files, fetched not authored.
+# JUDGE_MODEL_PATH points here; README records how to fetch.
 models/
 
-# Interim pipeline artifacts in subdirectories (data/interim/*.parquet above
-# does not match nested paths such as data/interim/full_run/).
-data/interim/**/*.parquet
 
-# Generated hand-audit sheets. ~4 MB of plain text, rebuilt from the corpus by
-# notes/stage4-scripts/. The LABELS derived from them are committed under
-# data/eval/ and are the part that cannot be regenerated.
-notes/full_*.txt
-notes/audit_*.txt
-notes/impact_*.txt
-notes/stage4b_mvonly_sheet.txt

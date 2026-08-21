@@ -4,6 +4,7 @@ from pandas.testing import assert_frame_equal
 
 from stock_predictor.config import LEAD_SENTENCE_WINDOW
 from stock_predictor.text import sentiment as sentiment_module
+from stock_predictor.text.fusion import AGGREGATED_VARIANTS, FUSION_AGGREGATIONS
 from stock_predictor.text.sentiment import (
     ABSA_FEATURE_COLUMNS,
     FUSION_FEATURE_COLUMNS,
@@ -200,7 +201,6 @@ def test_score_sentence_table_preserves_unrelated_cache_entries(tmp_path):
             # needs_score() schema: all rows relevant, so every text is scored
             # under the new only_relevant=True default.
             "mentions_target": [True, True],
-            "mentions_other": [False, False],
             "mentions_ceo": [False, False],
         }
     )
@@ -236,7 +236,6 @@ def test_full_corpus_sequence_headline_save_does_not_wipe_sentence_entries(tmp_p
             "text": sentence_texts,
             # needs_score() schema: all rows relevant, so every text is scored.
             "mentions_target": [True] * len(sentence_texts),
-            "mentions_other": [False] * len(sentence_texts),
             "mentions_ceo": [False] * len(sentence_texts),
         }
     )
@@ -305,7 +304,6 @@ def _sent_row(
     neg,
     neu,
     mentions_ceo=False,
-    is_comparative=False,
     is_boilerplate=False,
 ):
     return {
@@ -314,7 +312,7 @@ def _sent_row(
         "text": text,
         "mentions_target": mentions_target,
         "mentions_ceo": mentions_ceo,
-        "resolved_by_anaphora": False,
+        "resolved_by_coref": False,
         "is_boilerplate": is_boilerplate,
         "char_len": len(text),
         "pos": pos,
@@ -558,21 +556,18 @@ def test_aggregate_article_features_includes_fusion_columns():
     df = pd.DataFrame(rows)
     result = aggregate_article_features(df)
 
-    # 3 promoted variants x 6 aggregations. conf_graft_floor joined
-    # conf_graft and conf_graft_soft when CONF_FLOOR became the shipped
-    # scoring; the older two stay promoted so earlier measurements remain
-    # reproducible from the same call.
-    assert len(FUSION_FEATURE_COLUMNS) == 18
+    # One promoted variant x six aggregations. Derived rather than hardcoded,
+    # so promoting or demoting a variant does not leave a stale literal here.
+    assert len(FUSION_FEATURE_COLUMNS) == len(AGGREGATED_VARIANTS) * len(FUSION_AGGREGATIONS)
     for col in FUSION_FEATURE_COLUMNS:
         assert col in result.columns
 
     row = result.iloc[0]
     # Population is non-empty (2 target, non-boilerplate sentences with real
-    # scores), so these should be real numbers, not NaN -- check all six
-    # aggregations for every promoted variant, not just _mean, so this test
-    # actually exercises the full 18-column list rather than a fraction of it.
-    for variant in ("conf_graft", "conf_graft_soft", "conf_graft_floor"):
-        for agg in ("mean", "median", "lead", "top3_pos", "top3_neg", "spread"):
+    # scores), so every promoted column should be a real number. Driven off the
+    # constants so it exercises the whole family however many variants ship.
+    for variant in AGGREGATED_VARIANTS:
+        for agg in FUSION_AGGREGATIONS:
             assert not pd.isna(row[f"fus_{variant}_{agg}"])
 
 
@@ -587,7 +582,7 @@ def test_aggregate_article_features_fusion_nan_when_absa_absent():
     df = pd.DataFrame(rows)
     result = aggregate_article_features(df)
 
-    assert len(FUSION_FEATURE_COLUMNS) == 18
+    assert len(FUSION_FEATURE_COLUMNS) == len(AGGREGATED_VARIANTS) * len(FUSION_AGGREGATIONS)
     for col in FUSION_FEATURE_COLUMNS:
         assert col in result.columns
         assert pd.isna(result.iloc[0][col])
@@ -753,7 +748,6 @@ def _bucket_coverage_rows():
             0.20,
             0.70,
             0.10,
-            is_comparative=True,
         ),
         _sent_row(200, 1, "Tesla still leads on software.", True, False, 0.65, 0.20, 0.15),
         _sent_row(200, 2, "Musk unveiled a new rocket.", False, False, 0.40, 0.35, 0.25,

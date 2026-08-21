@@ -13,14 +13,11 @@ def _sentence_row(
     article_id=1,
     sent_idx=0,
     mentions_target=False,
-    mentions_other=False,
     mentions_ceo=False,
-    is_comparative=False,
-    resolved_by_anaphora=False,
     resolved_by_coref=False,
     is_boilerplate=False,
-    anaphor_char_start=None,
-    anaphor_char_end=None,
+    mention_char_start=None,
+    mention_char_end=None,
 ):
     """One row of the entity_filter sentence schema, spelled out by hand.
 
@@ -33,23 +30,18 @@ def _sentence_row(
         "sent_idx": sent_idx,
         "text": text,
         "mentions_target": mentions_target,
-        "mentions_other": mentions_other,
         "mentions_ceo": mentions_ceo,
-        "is_comparative": is_comparative,
-        "target_is_subject": False,
-        "resolved_by_anaphora": resolved_by_anaphora,
         "resolved_by_coref": resolved_by_coref,
-        "other_source": "",
         "is_boilerplate": is_boilerplate,
         "char_len": len(text),
-        "anaphor_char_start": anaphor_char_start,
-        "anaphor_char_end": anaphor_char_end,
+        "mention_char_start": mention_char_start,
+        "mention_char_end": mention_char_end,
     }
 
 
 def _frame(rows):
     df = pd.DataFrame(rows)
-    return df.astype({"anaphor_char_start": "Int64", "anaphor_char_end": "Int64"})
+    return df.astype({"mention_char_start": "Int64", "mention_char_end": "Int64"})
 
 
 # ---------------------------------------------------------------------------
@@ -78,19 +70,19 @@ def test_build_pairs_explicit_target_scores_text_unchanged():
     assert out.loc[0, "absa_aspect"] == "Tesla"
 
 
-def test_build_pairs_substitutes_resolved_anaphor_and_leaves_text_intact():
-    # An ABSA model attends to an aspect TERM present in the text. An anaphoric
+def test_build_pairs_substitutes_resolved_mention_and_leaves_text_intact():
+    # An ABSA model attends to an aspect TERM present in the text. An referring
     # sentence names no company, so the resolved name is injected over the
-    # anaphor's own characters -- that is what anaphor_char_start/end are for.
+    # mention's own characters -- that is what mention_char_start/end are for.
     text = "The company also raised prices across its lineup."
     start, end = 0, len("The company")
     rows = [
         _sentence_row(
             text,
             mentions_target=True,
-            resolved_by_anaphora=True,
-            anaphor_char_start=start,
-            anaphor_char_end=end,
+            resolved_by_coref=True,
+            mention_char_start=start,
+            mention_char_end=end,
         )
     ]
     out = absa.build_pairs(_frame(rows), TICKER)
@@ -112,8 +104,8 @@ def test_build_pairs_substitutes_coref_resolved_span():
                     text,
                     mentions_target=True,
                     resolved_by_coref=True,
-                    anaphor_char_start=0,
-                    anaphor_char_end=2,
+                    mention_char_start=0,
+                    mention_char_end=2,
                 )
             ]
         ),
@@ -142,9 +134,9 @@ def test_build_pairs_invalid_span_falls_back_to_unchanged_text(start, end):
                 _sentence_row(
                     text,
                     mentions_target=True,
-                    resolved_by_anaphora=True,
-                    anaphor_char_start=start,
-                    anaphor_char_end=end,
+                    resolved_by_coref=True,
+                    mention_char_start=start,
+                    mention_char_end=end,
                 )
             ]
         ),
@@ -186,8 +178,7 @@ def test_build_pairs_comparative_row_takes_the_target_aspect():
     # whole motivation for this module, so the target aspect wins.
     text = "Build-A-Bear outperformed Tesla this quarter."
     out = absa.build_pairs(
-        _frame([_sentence_row(text, mentions_target=True, mentions_other=True,
-                              is_comparative=True)]),
+        _frame([_sentence_row(text, mentions_target=True)]),
         TICKER,
     )
     assert out.loc[0, "absa_aspect"] == "Tesla"
@@ -327,7 +318,7 @@ def test_corrupt_cache_is_treated_as_empty(tmp_path):
 def test_absa_aggregates_are_nan_when_score_columns_absent():
     rows = [
         _sentence_row("Tesla delivered record numbers.", sent_idx=0, mentions_target=True),
-        _sentence_row("Ford reported strong truck sales.", sent_idx=1, mentions_other=True),
+        _sentence_row("Ford reported strong truck sales.", sent_idx=1),
         _sentence_row("Musk said the case would proceed.", sent_idx=2, mentions_ceo=True),
     ]
     df = _frame(rows)
@@ -351,10 +342,8 @@ def test_absa_aggregates_read_the_same_buckets_as_finbert():
             "Build-A-Bear outperformed Tesla.",
             sent_idx=1,
             mentions_target=True,
-            mentions_other=True,
-            is_comparative=True,
         ),
-        _sentence_row("Ford reported strong truck sales.", sent_idx=2, mentions_other=True),
+        _sentence_row("Ford reported strong truck sales.", sent_idx=2),
         _sentence_row("Musk said the case would proceed.", sent_idx=3, mentions_ceo=True),
     ]
     df = _frame(rows)
@@ -427,8 +416,8 @@ def test_build_pairs_inflects_the_injected_name(text, start, end, expected):
                     text,
                     mentions_target=True,
                     resolved_by_coref=True,
-                    anaphor_char_start=start,
-                    anaphor_char_end=end,
+                    mention_char_start=start,
+                    mention_char_end=end,
                 )
             ]
         ),
@@ -449,8 +438,8 @@ def test_build_pairs_never_substitutes_over_a_personal_possessive():
     person-mention rule already forbids wearing a possessive costume: a company
     does not have a "his", so a coreference chain that links one to a company is
     in error, and injecting the company name over it speaks for a human being.
-    is_substitutable_anaphor() therefore excludes the person pronouns from
-    _ANAPHORIC_PRONOUNS, and the row is scored with its text UNCHANGED.
+    is_substitutable_mention() therefore excludes the person pronouns from
+    _MENTION_PRONOUNS, and the row is scored with its text UNCHANGED.
 
     _inflect_name() still maps "his" -> "Tesla's" in isolation (see the test
     below); that is correct as an inflection rule and simply unreachable for
@@ -464,8 +453,8 @@ def test_build_pairs_never_substitutes_over_a_personal_possessive():
                     text,
                     mentions_target=True,
                     resolved_by_coref=True,
-                    anaphor_char_start=20,
-                    anaphor_char_end=23,
+                    mention_char_start=20,
+                    mention_char_end=23,
                 )
             ]
         ),
@@ -508,8 +497,8 @@ def test_build_pairs_expands_contraction_instead_of_splitting_it(text, start, en
                     text,
                     mentions_target=True,
                     resolved_by_coref=True,
-                    anaphor_char_start=start,
-                    anaphor_char_end=end,
+                    mention_char_start=start,
+                    mention_char_end=end,
                 )
             ]
         ),
@@ -571,8 +560,8 @@ def test_build_pairs_never_substitutes_over_a_person_mention():
                     text,
                     mentions_target=True,
                     resolved_by_coref=True,
-                    anaphor_char_start=start,
-                    anaphor_char_end=start + len("the Tesla CEO"),
+                    mention_char_start=start,
+                    mention_char_end=start + len("the Tesla CEO"),
                 )
             ]
         ),
@@ -594,16 +583,16 @@ def test_build_pairs_resolved_row_with_no_span_scores_unchanged_text():
 
 
 # ---------------------------------------------------------------------------
-# A non-substitutable anaphor (entity_filter.is_substitutable_anaphor() is
+# A non-substitutable mention (entity_filter.is_substitutable_mention() is
 # False) is never substituted over, even when a span was recorded for it --
 # defence-in-depth against a bad span sneaking past entity_filter's own
 # span-selection guard (see entity_filter._coref_hits_in_sentence()).
 # ---------------------------------------------------------------------------
 
 
-def test_substitute_resolved_returns_unchanged_text_for_non_anaphoric_span():
+def test_substitute_resolved_returns_unchanged_text_for_non_referring_span():
     # "Brazil" is a proper noun a coref error dragged into the chain, not a
-    # company anaphor -- entity_filter.is_substitutable_anaphor("Brazil") is
+    # company mention -- entity_filter.is_substitutable_mention("Brazil") is
     # False, so absa.py must refuse to inject over it even though the span
     # itself is perfectly well-formed.
     text = "That list is Australia, Brazil, India, Korea, and Vietnam."
@@ -612,17 +601,17 @@ def test_substitute_resolved_returns_unchanged_text_for_non_anaphoric_span():
 
     new_text, outcome = absa._substitute_resolved(text, start, end, "Tesla")
 
-    assert outcome == "not_anaphor"
+    assert outcome == "not_mention"
     assert new_text == text
     # Byte-identical, not merely equal-looking.
     assert new_text is text or new_text.encode() == text.encode()
 
 
-def test_build_pairs_non_anaphoric_span_leaves_text_unchanged():
+def test_build_pairs_non_referring_span_leaves_text_unchanged():
     # Real corpus breakage: "Both stocks trade at steep valuations" became
     # "Tesla trade at steep valuations" because the plural "stocks" was
     # substituted over. A row flagged resolved whose span covers a
-    # non-anaphoric surface must get absa_text == text (unchanged) while still
+    # non-referring surface must get absa_text == text (unchanged) while still
     # getting the correct absa_aspect, exactly like the "person" and "no_span"
     # outcomes.
     text = "Both stocks trade at steep valuations this quarter."
@@ -634,9 +623,9 @@ def test_build_pairs_non_anaphoric_span_leaves_text_unchanged():
                 _sentence_row(
                     text,
                     mentions_target=True,
-                    resolved_by_anaphora=True,
-                    anaphor_char_start=start,
-                    anaphor_char_end=end,
+                    resolved_by_coref=True,
+                    mention_char_start=start,
+                    mention_char_end=end,
                 )
             ]
         ),

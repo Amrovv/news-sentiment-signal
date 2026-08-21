@@ -1,47 +1,20 @@
 """Aspect-based sentiment (ABSA) over entity-tagged sentences.
 
-WHY THIS EXISTS. FinBERT scores a SENTENCE. The pipeline asks a different
-question: how does this sentence read ABOUT THE TARGET COMPANY? Those come apart
-exactly where it hurts most. "Build-A-Bear outperformed Tesla" is an
-unambiguously positive sentence and FinBERT scores it positive; credited to
-Tesla it is backwards. Notebook 2.0 measured that pollution and could only
-respond by DELETING the offending sentences (the since-removed
-sent_entity_excl_comp_* family). An aspect-based model is handed the aspect term
-explicitly and scores sentiment toward it, so the comparative sentence can be
-kept and read correctly instead -- which is why that exclusion family, and the
-other-company detection that drove it, were both retired.
+FinBERT scores a sentence; this scores how a sentence reads about a given aspect,
+so a comparative sentence can be attributed correctly rather than dropped. Runs
+alongside FinBERT, writing absa_* columns parallel to the sent_* ones.
 
-THIS RUNS ALONGSIDE FinBERT, NOT INSTEAD OF IT. Every column this module feeds
-into sentiment.aggregate_article_features() is a NEW absa_* column parallel to
-an existing sent_* one; no FinBERT column changes name, semantics or value. The
-model here (config.ABSA_MODEL) is SemEval/review-trained, not finance-trained,
-so the plausible failure mode is "better on the ~3% of comparative sentences,
-worse on the other 97%". That is a measurement to run, not an assumption to
-make, which is why both families of features coexist.
+    is_available()          the backend imported and the model loaded
+    build_pairs()           sentence table -> absa_text / absa_aspect
+    score_pairs()           batched, cached (text, aspect) scorer
+    score_sentence_table()  both of the above, merged back on
+    load_cache()/save_cache()
 
-MODULE SHAPE mirrors sentiment.py and coref.py deliberately:
-    is_available()        -> bool; the backend imported and the model loaded
-    score_pairs()         -> core batched + cached (text, aspect) scorer
-    build_pairs()         -> sentence table -> absa_text / absa_aspect columns
-    score_sentence_table()-> build_pairs() + score_pairs(), merged back on
-    load_cache()/save_cache() -> on-disk parquet cache, MERGE never replace
+Cache key is hash_text(text + "\x00" + aspect), over both jointly, since the aspect
+is half the model input. Saves MERGE with the cache loaded at call start.
 
-CACHE KEY. sentiment.hash_text(text + "\\x00" + aspect) — the SAME hashing
-implementation as FinBERT's cache, deliberately not a second copy, over text and
-aspect JOINTLY. The aspect is half the input to the model, so a key over text
-alone would serve a Tesla-aspect score for a Ford-aspect query. NUL is used as
-the separator because it cannot occur in the corpus text, so no (text, aspect)
-pair can collide with a different pair by rearranging the boundary.
-
-MERGE-NOT-REPLACE. Every save concatenates with the cache loaded at the start of
-the call before deduping. sentiment.py's module docstring records the corpus-run
-truncation bug that came from writing only the current call's rows; the same
-shape of bug here would throw away a full ABSA pass, so the pattern is repeated
-rather than re-derived.
-
-GRACEFUL DEGRADATION. Nothing in this module may hard-fail the pipeline. A
-missing/broken model means one warning and NaN scores; a corrupt cache means one
-warning and a cold run; an unusable substitution span means the unchanged text.
+Nothing here hard-fails the pipeline: a broken model gives NaN, a corrupt cache a
+cold run, an unusable span the unchanged text.
 """
 
 import pandas as pd
@@ -85,13 +58,10 @@ def pair_hash(text: str, aspect: str) -> str:
 
 
 def load_cache(path=ABSA_CACHE_PATH) -> pd.DataFrame:
-    """Load the on-disk ABSA score cache.
+    """Load the on-disk ABSA score cache, or an empty frame when absent.
 
-    Returns an empty frame with CACHE_COLUMNS when the file does not exist.
-    NEVER raises: a corrupt, truncated or schema-drifted file logs one warning
-    and is treated as empty, so the run pays for a cold pass instead of dying on
-    a cache it could have ignored. (Same laxer policy as coref.load_cache(): the
-    cache is a pure speed optimisation and cannot change any output value.)
+    Never raises: a corrupt file logs one warning and reads as empty, costing a cold
+    pass. The cache affects speed only, never output values.
     """
     if not path.exists():
         return pd.DataFrame(columns=CACHE_COLUMNS)
@@ -124,13 +94,9 @@ def save_cache(cache_df: pd.DataFrame, path=ABSA_CACHE_PATH) -> None:
 def _load_model_and_tokenizer():
     """Load (once, then memoise) the ABSA model. Returns (None, None) on failure.
 
-    The model is a standard AutoModelForSequenceClassification used in its
-    SENTENCE-PAIR form: tokenizer(text, aspect) -> 3 logits over
-    negative/neutral/positive. Its label order is read from config.id2label at
-    load time by _build_label_index_map(), never assumed — this checkpoint
-    happens to be {0: Negative, 1: Neutral, 2: Positive}, which is NOT FinBERT's
-    order, so an index assumption copied from sentiment.py would have silently
-    swapped positive and negative.
+    Used in its sentence-pair form: tokenizer(text, aspect) -> 3 logits. Label order
+    is read from config.id2label, never assumed; this checkpoint is
+    {0: Negative, 1: Neutral, 2: Positive}, unlike FinBERT.
     """
     global _MODEL, _TOKENIZER, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
@@ -172,30 +138,15 @@ def score_pairs(
 ) -> pd.DataFrame:
     """Core batched + cached aspect-based scorer.
 
-    `pairs` is a list of (text, aspect). Structurally this is
-    sentiment.score_sentences() with a two-part key and a two-part model input:
+    `pairs` is a list of (text, aspect). Pairs are deduped on pair_hash, cache hits
+    served, and the remainder sorted by combined length before batching so same-batch
+    sequences pad alike. Label columns are mapped by name from model.config.id2label;
+    this checkpoint's order differs from FinBERT's.
 
-      * every pair is hashed with pair_hash() and DEDUPED, because the same
-        (sentence, aspect) recurs across articles (syndicated copy) and within
-        one article's repeated framing;
-      * hashes present in `cache_df` are served from it and never re-scored;
-      * the needs-scoring remainder is sorted by combined length before batching
-        so same-batch sequences pad to similar lengths;
-      * batches run under torch.no_grad(), truncated to MAX_TOKENS;
-      * label columns are mapped BY NAME through
-        sentiment._build_label_index_map() reading model.config.id2label, never
-        by hardcoded index — this checkpoint's order differs from FinBERT's.
+    If every hash hits, the model is never loaded. If it cannot be loaded, un-cached
+    pairs are omitted with one warning and callers' left-merge turns them into NaN.
 
-    If every hash is a cache hit the model is NEVER LOADED, even with
-    model/tokenizer left None. That makes warm runs cheap and lets tests score
-    without a model at all.
-
-    Degradation: if the model cannot be loaded, the un-cached pairs are simply
-    omitted from the result (one warning). Callers left-merge, so those rows end
-    up NaN rather than raising.
-
-    Returns one row per UNIQUE pair_hash, columns pair_hash, pos, neg, neu.
-    Does NOT write to disk — callers own when to call save_cache().
+    Returns one row per unique pair_hash. Does not write to disk.
     """
     if cache_df is None or len(cache_df) == 0:
         cache_lookup: dict[str, tuple[float, float, float]] = {}
@@ -295,23 +246,13 @@ _POSSESSIVE_PRONOUNS = frozenset({"its", "their", "his", "her", "our", "your"})
 _CONTRACTIONS_IS = frozenset({"it's", "it’s", "he's", "he’s", "she's", "she’s"})
 _CONTRACTIONS_ARE = frozenset({"they're", "they’re", "we're", "we’re"})
 
-# Bare (non-possessive) pronoun surfaces that may be handed to _substitute()
-# with a TRAILING CLITIC not included in [start, end) -- see
-# _consume_trailing_clitic()'s docstring for why the span and the clitic can
-# be misaligned this way.
+# Bare pronoun surfaces whose span may exclude a trailing clitic; see
+# _consume_trailing_clitic().
 _BARE_PRONOUN_SURFACES = frozenset({"it", "they", "he", "she"})
 
-# Apostrophe clitics that attach directly to a pronoun with no space
-# ("It's", "They're", "We'd"), ordered longest-first so a prefix match (e.g.
-# "'s" inside "'re") never wins over the correct, longer one. Both the
-# straight and curly apostrophe forms are listed since scraped news text uses
-# both. Maps the clitic to the copula/auxiliary it expands into -- a SINGULAR
-# company subject, since the injected name is always one company:
-#   "'s"  -> "is"    (copula, not the possessive -- see the docstring below)
-#   "'re" -> "is"    ("It's"/"They're" + company both read as singular)
-#   "'ll" -> "will"
-#   "'ve" -> "has"
-#   "'d"  -> "would"
+# Clitic -> the auxiliary it expands into, always singular since the injected
+# name is one company. Longest-first so "'s" cannot match inside "'re". Straight
+# and curly apostrophes both appear in scraped text.
 _CLITIC_EXPANSIONS = [
     ("'ll", "will"), ("’ll", "will"),
     ("'ve", "has"), ("’ve", "has"),
@@ -322,27 +263,15 @@ _CLITIC_EXPANSIONS = [
 
 
 def _consume_trailing_clitic(text: str, surface: str, end: int) -> tuple[str | None, int]:
-    """Detect an apostrophe clitic glued to the END of the replaced span.
+    """Detect an apostrophe clitic glued to the end of the replaced span.
 
-    entity_filter's resolved anaphor span sometimes covers ONLY the pronoun
-    ("It" at [0, 2)) while the surrounding text reads "It's also profitable" --
-    the clitic "'s" is a separate token immediately after the span, not part
-    of it. Naively replacing [start, end) then leaves the orphaned clitic
-    stitched onto the injected name: "It's also profitable" became "Tesla's
-    also profitable", which reads as a POSSESSIVE ("Tesla's [something] also
-    profitable") when the sentence actually means "Tesla IS also profitable".
-    Measured on the corpus: ~17 rows this way dropped a verb entirely and ~5
-    split a clitic mid-word ("we're" -> "Tesla're").
+    The resolved span often covers only the pronoun ("It" in "It's also profitable"),
+    leaving the clitic just outside it, so replacing naively yields the possessive
+    "Tesla's also profitable" for a sentence meaning "Tesla is also profitable".
 
-    Returns (expansion, clitic_len) when `surface` (the text the span itself
-    covers) is a BARE, non-possessive pronoun ("it", "they", ...) AND `text`
-    immediately after `end` begins with one of _CLITIC_EXPANSIONS' clitics;
-    otherwise (None, 0). Gated on "bare pronoun" specifically because a
-    genuinely possessive surface ("its", "the company's") is already handled
-    by _inflect_name() and must keep its existing "<Name>'s" behaviour -- the
-    "'s" this function consumes is always the COPULA, which is only possible
-    because the span it follows was a bare subject pronoun, not a possessive
-    one.
+    Returns (expansion, clitic_len) when `surface` is a bare, non-possessive pronoun
+    and `text` after `end` begins with a known clitic; otherwise (None, 0). Possessive
+    surfaces are handled by _inflect_name() instead.
     """
     low = (surface or "").strip().lower()
     if low not in _BARE_PRONOUN_SURFACES:
@@ -357,28 +286,9 @@ def _consume_trailing_clitic(text: str, surface: str, end: int) -> tuple[str | N
 def _inflect_name(name: str, surface: str) -> str:
     """Inflect `name` to fit grammatically where `surface` stood.
 
-    Substitution replaces the anaphor's own characters with the company name,
-    and a bare name does not fit every anaphor:
-
-        "Its revenue increased 16%..."          -> "Tesla revenue increased..."
-        "This is a direct result of its price cuts" -> "of Tesla price cuts"
-
-    Both are ungrammatical, and an ABSA model reading them is being handed
-    broken input on a sentence that was otherwise fine. So the surface form is
-    inspected and the injected name inflected to match:
-
-      * a possessive pronoun ("its", "their", "his", "her") or a surface already
-        ending in "'s"/"’s" ("the company's") -> "<Name>'s";
-      * a subject+copula contraction ("it's", "he's") -> "<Name> is", and
-        ("they're", "we're") -> "<Name> are" — genuinely referential ones only,
-        since expletive "It's" is dropped upstream (see
-        entity_filter._is_expletive_mention());
-      * anything else -> the bare name, which is the original behaviour.
-
-    Capitalisation follows the surface: a surface that was capitalised (a
-    sentence-initial "Its") yields a capitalised injection. Registry display
-    names are proper nouns and already capitalised, so this only matters for a
-    lowercase display name.
+    A possessive pronoun or a surface ending in "'s" gives "<Name>'s"; "it's"/"he's"
+    gives "<Name> is"; "they're"/"we're" gives "<Name> are"; anything else the bare
+    name. Capitalisation follows the surface.
     """
     stripped = (surface or "").strip()
     low = stripped.lower()
@@ -399,23 +309,13 @@ def _inflect_name(name: str, surface: str) -> str:
 
 
 def _substitute(text: str, start, end, name: str) -> tuple[str, bool]:
-    """Replace text[start:end] with `name`, INFLECTED to fit the surface form it
-    replaces (see _inflect_name()). Returns (new_text, substituted).
+    """Replace text[start:end] with `name`, inflected to fit the surface it replaces.
 
-    Any unusable span — NA, non-integer, negative, reversed, past the end of the
-    string — falls back to the UNCHANGED text and returns False. It never
-    raises: a bad offset is a data-quality event on one sentence, and the caller
-    logs it at debug and scores the sentence unsubstituted rather than losing
-    the row or the run.
+    Returns (new_text, substituted). An unusable span falls back to the unchanged text
+    and returns False rather than raising.
 
-    NEVER SPLIT A CONTRACTION. If the span covers a bare pronoun ("It") and
-    text[end:] begins with an apostrophe clitic ("'s", "'re", "'ll", "'ve",
-    "'d") that is not part of [start, end), the clitic is consumed as part of
-    the replaced span and EXPANDED into the injected text ("It's also
-    profitable" -> "Tesla is also profitable", never "Tesla's also
-    profitable" — the latter reads as a possessive, and "'s" here is the
-    copula, not a possessive, precisely because the span was a bare pronoun).
-    See _consume_trailing_clitic().
+    A bare pronoun span followed by an apostrophe clitic consumes and expands it, so
+    contractions are never split. See _consume_trailing_clitic().
     """
     try:
         if start is None or end is None or pd.isna(start) or pd.isna(end):
@@ -434,46 +334,13 @@ def _substitute(text: str, start, end, name: str) -> tuple[str, bool]:
 
 
 def _substitute_resolved(text: str, start, end, name: str) -> tuple[str, str]:
-    """Substitute `name` into `text` over the resolved anaphor span, if allowed.
+    """Substitute `name` into `text` over the resolved mention span, if allowed.
 
-    Returns (text_to_score, outcome), outcome being one of:
-      "substituted"  — the name was injected (inflected by _substitute());
-      "person"       — the span is a PERSON mention, so the sentence is scored
-                       UNCHANGED. A person mention must never be spoken for by
-                       the company: "It also claims Mr Musk had himself
-                       suggested turning OpenAI into a commercial venture."
-                       must not become "It also claims Tesla had himself
-                       suggested ...". The test is
-                       entity_filter._is_person_like(), the same predicate that
-                       forbids a person mention from keying a coref cluster;
-                       here it is the surface-only form, since this module
-                       holds the sentence text but not the parse
-                       (entity_filter applies the PERSON-entity half of the
-                       same predicate upstream and simply records no span for
-                       such a mention);
-      "not_anaphor"  — the span is present and not a PERSON mention, but is
-                       not a recognisably company-anaphoric surface either
-                       (entity_filter.is_substitutable_anaphor() is False), so
-                       the sentence is scored UNCHANGED. This is
-                       DEFENCE-IN-DEPTH: entity_filter already refuses to
-                       CHOOSE a non-substitutable span when a substitutable one
-                       is available in the same sentence (see
-                       _coref_hits_in_sentence()), but a sentence whose ONLY
-                       coref mention is non-substitutable still records that
-                       span, and the recency-heuristic anaphor path (generic
-                       "the company" / descriptor matching) has never been
-                       filtered by this predicate at all. Real corpus
-                       breakage this guards against: "Both stocks trade at
-                       steep valuations" -> "Tesla trade at steep valuations",
-                       and "It was a remarkable moment in the earnings call."
-                       -> "...a remarkable moment in Tesla.";
-      "no_span"      — the row is flagged resolved but carries no span at all;
-      "bad_span"     — the span is present but unusable (reversed, out of
-                       range).
+    Returns (text_to_score, outcome), where outcome is one of "substituted",
+    "person", "not_mention", "no_span" or "bad_span".
 
-    All non-"substituted" outcomes score the UNCHANGED text, which leaves the
-    model with no aspect anchor — the same position FinBERT is in — rather
-    than with nonsense.
+    Every non-substituted outcome scores the unchanged text, leaving the model without
+    an aspect anchor rather than with nonsense.
     """
     try:
         missing = start is None or end is None or pd.isna(start) or pd.isna(end)
@@ -487,8 +354,8 @@ def _substitute_resolved(text: str, start, end, name: str) -> tuple[str, str]:
         surface = ""
     if surface and entity_filter._is_person_like(surface):
         return text, "person"
-    if not entity_filter.is_substitutable_anaphor(surface):
-        return text, "not_anaphor"
+    if not entity_filter.is_substitutable_mention(surface):
+        return text, "not_mention"
     new_text, ok = _substitute(text, start, end, name)
     if not ok:
         return text, "bad_span"
@@ -496,65 +363,25 @@ def _substitute_resolved(text: str, start, end, name: str) -> tuple[str, str]:
 
 
 def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """Turn a TAGGED sentence table into (text, aspect) scoring pairs.
+    """Turn a tagged sentence table into (text, aspect) scoring pairs.
 
-    Adds exactly two columns and modifies nothing else — in particular the
-    original `text` column is never rewritten:
+    Adds absa_text and absa_aspect, rewriting nothing.
 
-        absa_text   : the string actually handed to the model
-        absa_aspect : the aspect term handed to the model alongside it
+    An ABSA model attends to an aspect term that must occur in the text, so a sentence
+    that only refers back to the company has the resolved name injected over the
+    mention's own characters using its recorded span.
 
-    WHY SUBSTITUTION EXISTS (the subtle part). An ABSA model attends to an
-    aspect TERM that must be PRESENT IN THE TEXT; it is not a classifier over an
-    abstract entity id. An anaphoric sentence — "The company also raised prices
-    across its lineup." — contains no company name for the model to attend to,
-    so passing aspect="Tesla" asks it to score a term that does not occur. So we
-    INJECT the resolved name over the anaphor's own characters, using the
-    anaphor_char_start/end spans entity_filter records for exactly this purpose
-    (coref.py's module docstring calls this out as the downstream reason those
-    spans are character offsets rather than token indices):
+    Rules, in priority order:
+      1. needs_score() False: empty pair, not scored
+      2. target named explicitly: text unchanged, aspect is the display name
+      3. target resolved by coref with a usable span: substitute the display name,
+         inflected to the surface it replaces. Person spans, non-company surfaces and
+         unusable spans fall back to unchanged text
+      4. CEO and not target: aspect is the matched person alias, text unchanged
 
-        "The company also raised prices."  ->  "Tesla also raised prices."
+    One aspect per row: rule 4's guard makes the two tiers mutually exclusive.
 
-    THIS MAKES ABSA QUALITY DEPENDENT ON ANTECEDENT QUALITY. A wrong antecedent
-    does not merely mis-file a correct score any more; it changes the sentence
-    the model reads. That dependency is the reason coreference landed before
-    this module rather than after it: roughly a third of all target sentences
-    arrive through anaphora, and the recency heuristic hand-scored at ~60%.
-
-    RULES, in priority order (one pair per row — see the note below):
-      1. Rows where sentiment.needs_score() is False get empty absa_text and
-         absa_aspect and are not scored. Same predicate as FinBERT uses, so the
-         two scorers cover the same rows.
-      2. mentions_target, named explicitly (neither resolved_by_coref nor
-         resolved_by_anaphora): absa_text = text UNCHANGED, aspect = the
-         target's display name. The name is already in the sentence.
-      3. mentions_target, resolved (resolved_by_coref OR resolved_by_anaphora)
-         with a usable span: substitute the target's display name over the
-         span; aspect = that display name. The injected name is INFLECTED to
-         the surface it replaces ("its" -> "Tesla's") — see _inflect_name(). A
-         span that is a PERSON mention is never substituted over, NOR is a span
-         that is not a recognisably company-anaphoric surface at all
-         (entity_filter.is_substitutable_anaphor() is False — e.g. a plural
-         "both companies", a demonstrative alone, a proper noun a coref error
-         dragged into the chain, or an arbitrary long NP that merely ends in a
-         company word); an unusable/absent span falls back to the unchanged
-         text too (logged at debug); see _substitute_resolved(). All of these
-         leave the aspect absent from the text — the model then reads the
-         sentence with no aspect anchor, which is the same position FinBERT is
-         in, so it degrades to sentence sentiment rather than to nonsense.
-      4. mentions_ceo and NOT mentions_target: aspect = the matched person
-         alias as it appears in the sentence ("Musk", "Elon Musk"), text
-         unchanged. The company is deliberately NOT substituted here: Musk is a
-         legitimate aspect in his own right, and the person tier has never been
-         allowed to speak for the company (see entity_filter.tag_sentences()).
-
-    ONE ASPECT PER ROW. Only the target and the CEO tier can supply an aspect
-    now that other-company detection is gone, and they are mutually exclusive by
-    rule 4's "NOT mentions_target" guard, so a row can never have two candidate
-    aspects to choose between.
-
-    Returns a COPY; the input frame is not mutated.
+    Returns a copy.
     """
     out = sentences_df.copy()
     if len(out) == 0:
@@ -573,7 +400,7 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     outcomes = {
         "substituted": 0,
         "person": 0,
-        "not_anaphor": 0,
+        "not_mention": 0,
         "no_span": 0,
         "bad_span": 0,
     }
@@ -586,12 +413,9 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         out.get("resolved_by_coref", pd.Series(False, index=out.index))
         .fillna(False)
         .astype(bool)
-        | out.get("resolved_by_anaphora", pd.Series(False, index=out.index))
-        .fillna(False)
-        .astype(bool)
     ).tolist()
-    span_start = out.get("anaphor_char_start", pd.Series([None] * len(out))).tolist()
-    span_end = out.get("anaphor_char_end", pd.Series([None] * len(out))).tolist()
+    span_start = out.get("mention_char_start", pd.Series([None] * len(out))).tolist()
+    span_end = out.get("mention_char_end", pd.Series([None] * len(out))).tolist()
 
     for i in range(len(out)):
         if not mask_values[i]:
@@ -609,7 +433,7 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
                 outcomes[outcome] += 1
                 if outcome == "bad_span":
                     logger.debug(
-                        f"build_pairs: unusable anaphor span "
+                        f"build_pairs: unusable mention span "
                         f"({span_start[i]}, {span_end[i]}) on a {len(text)}-char sentence; "
                         "scoring the unchanged text"
                     )
@@ -632,7 +456,7 @@ def build_pairs(sentences_df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         f"build_pairs: {n_pairs} pairs built from {int(mask_values.sum())} scoreable rows "
         f"({len(out)} total); resolved rows: {outcomes['substituted']} substituted, "
         f"{outcomes['person']} left unchanged (person mention), "
-        f"{outcomes['not_anaphor']} left unchanged (not a company anaphor), "
+        f"{outcomes['not_mention']} left unchanged (not a company mention), "
         f"{outcomes['no_span']} with no span recorded, "
         f"{outcomes['bad_span']} with an unusable span"
     )
@@ -644,20 +468,14 @@ def score_sentence_table(
     ticker: str,
     cache_path=ABSA_CACHE_PATH,
 ) -> pd.DataFrame:
-    """Build pairs for `sentences_df` and score them, returning the table with
-    absa_text, absa_aspect, absa_pos, absa_neg, absa_neu attached.
+    """Build pairs for `sentences_df` and score them.
 
-    The FinBERT counterpart of this function is
-    sentiment.score_sentence_table(), and the same three decisions are made the
-    same way, for the same reasons:
-      * only rows sentiment.needs_score() marks are scored (via build_pairs());
-      * rows without a pair get NaN, never 0 — 0.0 is a real probability the
-        model could have returned, so writing it would conflate "never scored"
-        with "scored and confidently not positive";
-      * the cache is saved ONCE at the end of the call, MERGED with the cache
-        loaded at its start.
+    Returns the table with absa_text, absa_aspect and the three absa_* score columns
+    attached. Mirrors sentiment.score_sentence_table(): only needs_score() rows are
+    scored, rows without a pair get NaN rather than 0 (0.0 is a real probability the
+    model could return), and the cache is saved once at the end, merged.
 
-    Returns a copy; the input frame is not mutated.
+    Returns a copy.
     """
     out = build_pairs(sentences_df, ticker)
     if len(out) == 0:
@@ -689,3 +507,44 @@ def score_sentence_table(
     for col in SCORE_COLUMNS:
         merged[col] = pd.to_numeric(merged[col], errors="coerce")
     return merged
+
+
+def score_headlines(
+    headlines_df: pd.DataFrame,
+    ticker: str,
+    cache_path=ABSA_CACHE_PATH,
+) -> pd.DataFrame:
+    """Score each headline toward the target company, one row per input row.
+
+    No substitution: a headline is standalone, so there is no antecedent to inject.
+    Headlines not naming the target are still scored, an absent aspect returning
+    near-neutral.
+
+    Returns article_id plus SCORE_COLUMNS. The cache is merged, never replaced.
+    """
+    aspect = _display_name(ticker)
+    if aspect is None:
+        raise KeyError(f"ticker {ticker!r} has no 'names' entry in COMPANIES")
+
+    out = headlines_df.copy()
+    if len(out) == 0:
+        for col in SCORE_COLUMNS:
+            out[col] = pd.Series(dtype=float)
+        return out[["article_id", *SCORE_COLUMNS]]
+
+    texts = out["headline"].fillna("").astype(str).tolist()
+    cache_df = load_cache(cache_path)
+    scored = score_pairs([(t, aspect) for t in texts], cache_df=cache_df)
+    save_cache(pd.concat([cache_df, scored], ignore_index=True), path=cache_path)
+
+    # score_pairs() returns the raw model columns pos/neg/neu; the absa_
+    # prefix is applied here, exactly as score_sentence_table() does, so the
+    # two entry points hand back the same names.
+    out["pair_hash"] = [pair_hash(t, aspect) for t in texts]
+    merged = out.merge(
+        scored.drop_duplicates("pair_hash"), on="pair_hash", how="left"
+    ).drop(columns=["pair_hash"])
+    merged = merged.rename(columns=dict(zip(("pos", "neg", "neu"), SCORE_COLUMNS)))
+    for col in SCORE_COLUMNS:
+        merged[col] = pd.to_numeric(merged[col], errors="coerce")
+    return merged[["article_id", *SCORE_COLUMNS]]

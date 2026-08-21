@@ -1,54 +1,22 @@
-"""FinBERT sentiment scoring over entity-tagged sentences.
+"""FinBERT sentiment scoring and article-level aggregation.
 
-Runs downstream of `stock_predictor.text.entity_filter`, which produces a
-sentence table with columns article_id, sent_idx, text, mentions_target,
-mentions_ceo, resolved_by_anaphora,
-is_boilerplate, char_len.
+Runs downstream of entity_filter, on the SENTENCE_COLUMNS table.
 
-Pipeline:
-    score_sentences()          -> core batched + on-disk-cached FinBERT scorer
-    score_sentence_table()     -> scores every unique sentence in a corpus-wide
-                                   sentence table, merges pos/neg/neu back on
-    score_headlines()          -> scores headlines standalone (same cache)
-    aggregate_article_features() -> per-article groupby aggregates from an
-                                   ALREADY-SCORED sentence table
-    analyze()                   -> single-article entry point for the live
-                                   demo; same code path as the batch pipeline
+    score_sentences()            batched, on-disk-cached FinBERT scorer
+    score_sentence_table()       scores a corpus table, merges pos/neg/neu on
+    score_headlines()            headlines standalone, same cache
+    aggregate_article_features() per-article aggregates from a scored table
+    build_model_features()       the lean model-facing table
+    analyze()                    single-article path for the live demo
 
-Design notes (see module-level docstrings below for detail):
-  * Selective scoring: needs_score() is the single source of truth for which
-    sentences aggregate_article_features() actually reads, and both the
-    scorer and the aggregator route through it so they cannot drift. On the
-    real corpus this cuts FinBERT forward passes by ~60% with byte-identical
-    article features.
-  * Cache persistence: score_sentence_table() and score_headlines() save the
-    on-disk cache once at the end of their call (not per internal batch) --
-    see score_sentence_table()'s docstring for the reasoning and the
-    interruption-safety tradeoff this implies. Every save is a MERGE with the
-    cache that was loaded at the start of the call (concat then dedupe),
-    never a replacement. This matters because score_sentences() returns rows
-    only for the hashes in the CURRENT call's input: saving that frame alone
-    silently truncates the cache to just those hashes. Notebook 2.1 hit
-    exactly this -- a full corpus run wrote ~56k sentence entries via
-    score_sentence_table() and then score_headlines() overwrote the file with
-    its ~2k headline entries, so the next run got ~2 cache hits out of ~56k
-    unique sentences and paid for a full FinBERT pass again.
-  * FinBERT label order is verified against model.config.id2label at load
-    time rather than assumed -- see _build_label_index_map().
-  * All three raw probabilities (pos, neg, neu) are stored everywhere; no
-    single collapsed score is persisted anywhere in this module -- WITH ONE
-    NAMED EXCEPTION. The fus_conf_graft_* / fus_conf_graft_soft_* /
-    fus_conf_graft_floor_* columns
-    (see FUSION_FEATURE_COLUMNS and the FUSION block in
-    aggregate_article_features()) ARE signed scalars, not pos/neg/neu
-    probability triples: they come from stock_predictor.text.fusion, which by
-    design collapses FinBERT and ABSA into one graft-fused number per
-    sentence (see fusion.py's module docstring for why). This is recorded
-    here honestly rather than silently violated. The invariant is preserved
-    IN SUBSTANCE, though: the raw pos/neg/neu and absa_pos/absa_neg/absa_neu
-    columns those grafts are built from are all still stored on the sentence
-    table, so every fus_* value remains exactly recomputable from what is
-    persisted -- nothing is lost, a derived convenience is added on top.
+needs_score() decides which sentences are scored, and the aggregator reads the
+same predicate, so the two cannot drift.
+
+Cache saves MERGE with the cache loaded at the start of the call. score_sentences()
+returns only the current call's hashes, so saving it alone truncates the file.
+
+Scores are stored as raw pos/neg/neu triples. The fus_* columns are the exception,
+being signed scalars from fusion.py; the triples behind them are still persisted.
 """
 
 import hashlib
@@ -61,6 +29,7 @@ from tqdm import tqdm
 from stock_predictor.config import (
     FINBERT_MODEL,
     LEAD_SENTENCE_WINDOW,
+    PRIMARY_TICKER,
     MAX_TOKENS,
     SENTIMENT_BATCH_SIZE,
     SENTIMENT_CACHE_PATH,
@@ -69,12 +38,7 @@ from stock_predictor.text import entity_filter, fusion
 
 CACHE_COLUMNS = ["text_hash", "pos", "neg", "neu"]
 
-# Score columns an aspect-based pass (stock_predictor.text.absa) attaches to the
-# sentence table, and the article-level columns aggregate_article_features()
-# derives from them. These sit ALONGSIDE the FinBERT sent_* features: no
-# existing column's name, semantics or value changes when ABSA is present, and
-# every one of these is NaN when it is absent. See the ABSA block in
-# aggregate_article_features().
+# NaN when ABSA is absent; no sent_* column changes because these exist.
 ABSA_SCORE_COLUMNS = ["absa_pos", "absa_neg", "absa_neu"]
 ABSA_FEATURE_COLUMNS = [
     "absa_entity_pos",
@@ -85,16 +49,7 @@ ABSA_FEATURE_COLUMNS = [
     "absa_ceo_neu",
 ]
 
-# Article-level columns fusion.aggregate_fusion_features() derives from the
-# conf_graft / conf_graft_soft / conf_graft_floor fusion variants (the last
-# is the shipped scoring, see fusion.CONF_FLOOR) -- see the FUSION block in
-# aggregate_article_features() below and fusion.aggregate_fusion_features()'s
-# own docstring for the full reasoning (population, the six aggregations,
-# why top3 exists, why K stays at 3, and the measured cases behind median and
-# spread). Like ABSA_FEATURE_COLUMNS, this sits ALONGSIDE the
-# existing sent_*/absa_* columns: nothing here changes any existing column's
-# name, semantics or value, and every one of these is NaN when fusion cannot
-# be computed (e.g. the ABSA score columns fusion needs are absent).
+# NaN when fusion cannot be computed, which is whenever the ABSA scores are absent.
 FUSION_FEATURE_COLUMNS = [
     f"fus_{variant}_{agg}"
     for variant in fusion.AGGREGATED_VARIANTS
@@ -107,46 +62,15 @@ CONSUMED_MENTION_COLUMNS = ["mentions_target", "mentions_ceo"]
 
 
 def needs_score(sentences_df: pd.DataFrame) -> pd.Series:
-    """Boolean mask of sentences whose FinBERT scores are actually consumed by
-    aggregate_article_features().
+    """Boolean mask of sentences whose scores are consumed downstream.
 
-    Definition:
         (mentions_target | mentions_ceo) & ~is_boilerplate
 
-    THIS PREDICATE IS THE SINGLE SOURCE OF TRUTH shared by the scorer
-    (score_sentence_table(), analyze()) and the aggregator
-    (aggregate_article_features()), so the two cannot drift. Every
-    score-derived column in aggregate_article_features() reads from exactly
-    three sentence sets, all taken from the article's NON-boilerplate body:
+    Shared by the scorer and the aggregator so the two cannot drift: a feature reading
+    a new sentence bucket must be added here or it gets NaN for every article.
 
-        mentions_target -> sent_entity_*, sent_entity_maxmag_*, sent_entity_lead_*
-        mentions_ceo    -> sent_ceo_* (CEO-only: mentions_ceo & ~mentions_target,
-                           a subset of the mentions_ceo rows kept here)
-
-    The mentions_other bucket was removed with other-company detection: nothing
-    reads those rows any more, so scoring them was pure waste.
-
-    A sentence in none of those buckets, and every boilerplate sentence, is
-    never read by any feature: the remaining columns (n_total_sents,
-    entity_share, article_length, and the n_*_sents counts) derive from row
-    counts and char_len, not from scores. Scoring those rows is pure waste --
-    on the real corpus only ~31% of sentences pass this predicate.
-
-    IF A FUTURE FEATURE READS A NEW SENTENCE BUCKET, IT MUST BE ADDED HERE, or
-    that feature silently gets NaN for every article. The gate test
-    test_filtered_and_full_scoring_produce_identical_aggregates exists to make
-    that failure loud.
-
-    Ticker-agnostic by construction: it keys off the mentions_* flags, which
-    entity_filter computes relative to whatever ticker was passed, so nothing
-    here is target-specific.
-
-    A missing is_boilerplate column defaults to all-False (nothing excluded on
-    that basis), consistent with how aggregate_article_features() already
-    handles it. The three mentions_* columns are required.
-
-    Returns a bool Series aligned to sentences_df.index (empty frame -> empty
-    bool Series).
+    A missing is_boilerplate defaults to all-False; the mentions_* columns are
+    required. Returns a bool Series aligned to sentences_df.index.
     """
     missing = [c for c in CONSUMED_MENTION_COLUMNS if c not in sentences_df.columns]
     if missing:
@@ -235,31 +159,16 @@ def score_sentences(
     cache_df: pd.DataFrame | None = None,
     batch_size: int = SENTIMENT_BATCH_SIZE,
 ) -> pd.DataFrame:
-    """Core batched + cached FinBERT scoring function.
+    """Core batched + cached FinBERT scorer.
 
-    Hashes every input text (dedup internally by text_hash -- callers may
-    pass duplicate sentence text, e.g. repeated boilerplate across articles,
-    and we only want to run the model once per unique string). Splits the
-    unique hashes into cache-hits (looked up in `cache_df`, if given) and a
-    needs-scoring subset. The needs-scoring subset is sorted by text length
-    before batching so that same-batch sequences pad to similar lengths
-    (less wasted compute/padding, ~20-30% speedup on CPU vs. scoring in
-    arbitrary order), then batched in groups of `batch_size`, truncated to
-    MAX_TOKENS, run through the model under torch.no_grad(), and softmaxed
-    into (pos, neg, neu) probabilities.
+    Dedupes on text_hash, splits into cache hits and a needs-scoring remainder, sorts
+    that remainder by length before batching so same-batch sequences pad alike (20-30%
+    faster on CPU), then runs under torch.no_grad() truncated to MAX_TOKENS.
 
-    FinBERT's label order is verified against model.config.id2label (not
-    assumed) so the softmax columns are mapped correctly regardless of what
-    the loaded checkpoint's config says.
+    Label order is read from model.config.id2label, not assumed. If every hash hits,
+    the model is never loaded even with model/tokenizer None.
 
-    If every hash is already in `cache_df` (all cache hits), the model is
-    never loaded even if `model`/`tokenizer` are None -- this makes
-    cache-hit-only calls cheap and avoids requiring a model at all for
-    fully-cached workloads.
-
-    Returns one row per UNIQUE text_hash (not per input text), with columns
-    text_hash, pos, neg, neu. Does NOT write to disk -- callers own when to
-    call save_cache().
+    Returns one row per unique text_hash. Does not write to disk.
     """
     if cache_df is None or len(cache_df) == 0:
         cache_lookup: dict[str, tuple[float, float, float]] = {}
@@ -342,49 +251,15 @@ def score_sentence_table(
     cache_path=SENTIMENT_CACHE_PATH,
     only_relevant: bool = True,
 ) -> pd.DataFrame:
-    """Score the unique sentence texts in `sentences_df` via score_sentences()
-    with on-disk caching, then return sentences_df with pos/neg/neu merged on
-    (deduped) text -> text_hash.
+    """Score the unique texts in `sentences_df` and merge pos/neg/neu back on.
 
-    Selective scoring (only_relevant=True, the DEFAULT): only rows where
-    needs_score() is True are sent to FinBERT -- i.e. sentences in one of the
-    three buckets aggregate_article_features() actually reads
-    (mentions_target / mentions_ceo), excluding boilerplate.
-    needs_score() is the single source of truth shared with the aggregator, so
-    a filtered run and a full run produce byte-identical article features while
-    the filtered run does ~60% fewer forward passes on the real corpus.
+    With only_relevant=True (the default) only needs_score() rows reach FinBERT, which
+    gives identical article features for ~60% fewer forward passes. Rows outside the
+    mask get NaN, never 0.
 
-    Rows outside the mask get NaN for pos/neg/neu, never 0. This is the same
-    no-signal-vs-measured-neutral rule the rest of the module follows: 0.0 is a
-    real probability FinBERT could have returned, so writing it would silently
-    conflate "never scored" with "scored and confidently not positive". No
-    aggregate reads these rows, so NaN is safe -- and if some future code does
-    read them, NaN propagates loudly instead of quietly poisoning a mean.
-
-    Escape hatch: pass only_relevant=False to score every row (the old
-    behavior), e.g. for exploratory analysis over the whole sentence table. Its
-    marginal cost is low, because the on-disk cache is keyed by text hash and
-    is ticker-agnostic: any score ever paid for is reused by later runs and by
-    runs for other tickers.
-
-    Cache-save timing: this function calls save_cache() ONCE, after all
-    batches complete, rather than per-batch. Rationale: per-batch saves would
-    add ~150k/batch_size parquet writes over a full corpus run, which is a
-    lot of I/O for a file that fits comfortably in memory, and parquet
-    writes are full-file rewrites (not appends) so per-batch saving is O(n^2)
-    in total bytes written. The tradeoff is that a run interrupted mid-way
-    loses all progress from that run. Given CPU-only inference over ~150k
-    sentences is expected to take a while and could be interrupted, callers
-    that want interruption-safety should chunk their own calls to
-    score_sentence_table() (e.g. by article batch) and rely on the fact that
-    each call's cache_df is reloaded from disk at the start, so a prior
-    completed chunk's results are never re-scored.
-
-    The save MERGES with the cache loaded at the start of the call rather than
-    replacing it: score_sentences() returns rows only for this call's texts,
-    so persisting that frame on its own would drop every previously cached
-    entry not mentioned in `sentences_df` (see the module docstring's cache
-    persistence note for the notebook 2.1 failure this caused).
+    save_cache() runs once after all batches, not per batch, since parquet writes are
+    full-file rewrites; an interrupted run therefore loses that run's progress. The
+    save merges with the cache loaded at call start.
     """
     cache_df = load_cache(cache_path)
 
@@ -427,18 +302,14 @@ def score_sentence_table(
 
 
 def score_headlines(headlines_df: pd.DataFrame, cache_path=SENTIMENT_CACHE_PATH) -> pd.DataFrame:
-    """Score each headline standalone (one extra forward pass per article --
-    headlines carry disproportionate weight per spec). Reuses
-    score_sentences() and the same on-disk cache as sentence scoring.
+    """Score each headline standalone, one row per input row.
 
-    Returns article_id, pos, neg, neu (one row per input row).
+    One extra forward pass per article, since headlines carry disproportionate weight.
+    Reuses score_sentences() and the sentence cache.
 
-    Like score_sentence_table(), the save MERGES with the cache loaded at the
-    start of the call rather than replacing it. This function is the one that
-    exposed the bug: a corpus run calls it right after score_sentence_table(),
-    so replacing the file with only the headline rows wiped the tens of
-    thousands of sentence entries just written (see the module docstring's
-    cache persistence note).
+    The save MERGES, like score_sentence_table(). This function is the one that
+    exposed the bug: a corpus run calls it straight after score_sentence_table(), so
+    replacing the file wiped the sentence entries just written.
     """
     cache_df = load_cache(cache_path)
     headlines = headlines_df["headline"].tolist()
@@ -458,77 +329,22 @@ def score_headlines(headlines_df: pd.DataFrame, cache_path=SENTIMENT_CACHE_PATH)
 def aggregate_article_features(
     sentences_df: pd.DataFrame, headline_scores: pd.DataFrame | None = None
 ) -> pd.DataFrame:
-    """Compute article-level sentiment aggregates from an ALREADY-SCORED
-    sentence table (never re-scores here -- sentences_df must already carry
-    pos/neg/neu columns, e.g. from score_sentence_table()).
+    """Article-level aggregates from an already-scored sentence table.
 
-    Design decisions:
-      * Zero-target-sentence articles get NaN (not 0) for all
-        target-sentence-derived means. 0 would look like "neutral
-        sentiment" (a real, scored value), silently conflating "no
-        signal" with "measured and neutral". Same reasoning applied to
-        sent_entity_lead_* when its sentence set is empty.
-      * "maxmag" (largest-magnitude target sentence): for each article,
-        among its mentions_target sentences, pick the one with the largest
-        |pos - neg| and store ITS three raw probabilities as
-        sent_entity_maxmag_pos/neg/neu (not a single signed scalar). This
-        keeps the "never collapse to a single score in storage" rule intact
-        while still identifying the most emotionally extreme sentence about
-        the target company. A signed-magnitude column would need pos/neg
-        recomputed downstream anyway and would throw away neu, so the
-        three-column form is strictly more useful for the same cost.
-      * headline_scores is left-joined in; if not provided, the three
-        sent_headline_* columns are all-NaN and a warning is logged once.
-      * Boilerplate exclusion: every sentence-derived aggregate is computed
-        over the article's NON-boilerplate sentences only (see
-        entity_filter.flag_boilerplate()). Disclosure notices and syndicated
-        filler get scored by FinBERT like real content and, because they
-        repeat across hundreds of articles, pull every article toward the
-        same value. n_total_sents and entity_share therefore describe the
-        non-boilerplate body; article_length deliberately still sums over the
-        FULL group, since it measures the physical length of the article as
-        published, not the length of its usable content. The three
-        score-consuming sentence sets are selected through needs_score(),
-        which is the shared contract with score_sentence_table() -- see that
-        function's docstring.
-      * The sent_entity_excl_comp_* / absa_entity_excl_comp_* family and the
-        sent_other_mean_* / absa_other_mean_* family were REMOVED along with
-        other-company detection. excl_comp existed only because FinBERT scores a
-        whole sentence and could not tell whose sentiment it was, so deleting
-        comparative sentences was the only available defence; ABSA scores toward
-        the aspect and reads them correctly (notebook 2.5 §1.2 already declined
-        to build a fusion twin for exactly this reason). Both families depended
-        on a registry of rival companies that no longer exists.
+    Never scores: `sentences_df` must already carry pos/neg/neu.
 
-      * sent_ceo_*: mean over CEO-only sentences (mentions_ceo and NOT
-        mentions_target). The 2.0 ablation showed folding CEO mentions into
-        the target mean shifts the mean very little on average but touches
-        31.5% of articles; exposing it as its own feature lets the model
-        decide how much CEO talk is worth instead of us deciding here.
-      * Columns whose sentence set is empty are NaN, never 0 — the same
-        no-signal-vs-measured-neutral rule used throughout this module.
-      * absa_*: aspect-aware twins of four of the sent_* means
-        (absa_entity_*, absa_ceo_*), computed from the absa_pos/neg/neu columns
-        stock_predictor.text.absa attaches to the sentence table. They read
-        EXACTLY the same four sentence selections as their FinBERT
-        counterparts, so a difference between a pair is a difference between
-        the two MODELS and never between two populations. No existing sent_*
-        column changes in name, semantics or value because of them. If the
-        absa score columns are absent the whole family is NaN and one warning
-        is logged — the pipeline works with ABSA off.
-      * fus_*: article-level aggregates of the conf_graft / conf_graft_soft /
-        conf_graft_floor fusion variants (stock_predictor.text.fusion),
-        conf_graft_floor being the shipped scoring; computed by
-        fusion.aggregate_fusion_features() and merged in here rather than
-        inlined in this loop -- fusion.py owns the fusion logic, this module
-        only wires it into the article feature table. Same soft feature-detect
-        as ABSA: fusion needs both the FinBERT AND the ABSA score columns
-        (score_variants() reads pos/neg/absa_pos/absa_neg/absa_neu), so if the
-        ABSA score columns are absent the whole fus_* family is NaN and
-        exactly ONE warning is logged -- the pipeline works with fusion off.
-        See FUSION_FEATURE_COLUMNS and fusion.aggregate_fusion_features()'s
-        own docstring for the population, the four aggregations, and why
-        top3_pos/top3_neg exist.
+    Aggregates run over non-boilerplate sentences only; article_length still sums the
+    full group, since it measures the article as published. maxmag stores the three
+    raw probabilities of the largest |pos - neg| target sentence rather than one
+    signed scalar.
+
+    absa_* and fus_* are soft feature-detects: absent ABSA columns make both families
+    NaN with one warning each, and the pipeline runs with ABSA off.
+
+    Without `headline_scores` the sent_headline_* columns are NaN and one warning is
+    logged.
+
+    Empty sentence sets give NaN, never 0.
     """
     if len(sentences_df) == 0:
         return pd.DataFrame(
@@ -570,19 +386,8 @@ def aggregate_article_features(
         else:
             sentences_df[col] = sentences_df[col].fillna(False).astype(bool)
 
-    # The three score-consuming buckets below are derived THROUGH needs_score()
-    # rather than re-deriving the boilerplate exclusion independently, so the
-    # scorer and the aggregator cannot drift: score_sentence_table() scores
-    # exactly the rows this mask marks, and every sentence whose pos/neg/neu is
-    # read below is one of those rows. See needs_score()'s docstring.
     consumed = needs_score(sentences_df)
 
-    # ABSA-parallel features. absa.score_sentence_table() attaches
-    # absa_pos/neg/neu next to FinBERT's pos/neg/neu; when those columns are
-    # absent (ABSA off, an older sentence table, or a backend that failed to
-    # load) every absa_* aggregate is NaN and exactly ONE warning is logged.
-    # The pipeline must work with ABSA off, so this is a soft feature-detect
-    # rather than a required schema.
     has_absa = all(c in sentences_df.columns for c in ABSA_SCORE_COLUMNS)
     if not has_absa:
         logger.warning(
@@ -591,11 +396,7 @@ def aggregate_article_features(
             f"the {len(ABSA_FEATURE_COLUMNS)} absa_* features will be all-NaN"
         )
 
-    # fus_* features: fusion.score_variants() needs FinBERT's pos/neg AND
-    # ABSA's absa_pos/absa_neg/absa_neu, so this reuses `has_absa` as the
-    # gate rather than re-deriving a separate check -- fusion can never be
-    # computed on a sentence table ABSA cannot be computed on either. Same
-    # soft feature-detect and single-warning contract as ABSA above.
+    # Fusion needs both scorers, so it cannot run where ABSA could not.
     has_fusion = has_absa
     if not has_fusion:
         logger.warning(
@@ -672,10 +473,6 @@ def aggregate_article_features(
         else:
             ceo_pos = ceo_neg = ceo_neu = float("nan")
 
-        # ABSA over the SAME four selections, so every absa_* column is the
-        # aspect-aware twin of the sent_* column beside it and the pair is
-        # directly comparable. Bucket membership is unchanged: it still comes
-        # from needs_score() and the existing selections above.
         absa_entity = _absa_mean(target)
         absa_ceo = _absa_mean(ceo_only)
 
@@ -743,38 +540,13 @@ def analyze(
     headline: str | None = None,
     cache_path=SENTIMENT_CACHE_PATH,
 ) -> dict:
-    """Single-article entry point for the live Streamlit demo. Runs the same
-    code path as the batch corpus pipeline (entity_filter -> score_sentences
-    -> aggregate_article_features) so there is no second implementation to
-    drift out of sync with the batch pipeline (train/serve skew).
+    """Single-article entry point for the live demo.
 
-    Builds a synthetic one-article sentence table via
-    entity_filter.split_sentences() + tag_sentences(), scores it through
-    score_sentences() (a single small batch; the on-disk cache still
-    applies), optionally scores the headline standalone, and returns the
-    aggregate_article_features() output for this one article as a dict
-    (rather than a one-row DataFrame, since this is for interactive use).
+    Runs the same path as the batch pipeline (split, tag, score, aggregate), so there
+    is no second implementation to drift. Returns one article's features as a dict.
 
-    Design decision: unlike score_sentence_table()/score_headlines() (which
-    are called once per large batch job), analyze() DOES persist newly-scored
-    text back to the on-disk cache before returning. Rationale: this is the
-    interactive/demo path, so the same article or overlapping boilerplate
-    text may be re-analyzed across repeated user actions in a single
-    Streamlit session (or across sessions); paying the parquet-rewrite cost
-    once per single-article call (a handful of new rows at most) is cheap
-    and makes repeat interactions on the same text instant.
-
-    `cache_path` exists for the same reason score_sentence_table() has one:
-    so a caller -- in practice the test suite -- can point the cache
-    somewhere disposable. analyze() is the interactive entry point, so unlike
-    the batch functions it writes on every call rather than once at the end;
-    that makes it the one code path a careless test run would silently use to
-    scribble synthetic sentences into data/interim/finbert_cache.parquet and
-    bump its mtime. A test run must never mutate the project's real cache
-    file, so this parameter is kept LAST (after the existing positional
-    article_text/ticker/headline args) purely to avoid breaking any existing
-    positional call site, and it defaults to SENTIMENT_CACHE_PATH so today's
-    behavior is unchanged for every caller that doesn't pass it explicitly.
+    Unlike the batch functions this persists newly-scored text before returning.
+    `cache_path` exists so tests can point somewhere disposable.
     """
     synthetic_article_id = "__analyze__"
 
@@ -787,12 +559,6 @@ def analyze(
     new_cache_frames = []
 
     if len(sentences_df) > 0:
-        # Same needs_score() predicate as the batch path, for consistency and
-        # cost: sentences in none of the consumed buckets are never read by
-        # aggregate_article_features(), so scoring them is waste here too.
-        # is_boilerplate is always False on the single-article path (it is
-        # corpus-level), so this only skips the "neither bucket" sentences.
-        # The returned feature dict is unchanged in keys and in values.
         mask = needs_score(sentences_df)
         scored = score_sentences(sentences_df.loc[mask, "text"].tolist(), cache_df=cache_df)
         new_cache_frames.append(scored)
@@ -847,3 +613,123 @@ def analyze(
         return row
 
     return features_df.iloc[0].to_dict()
+
+
+# The model-facing feature table. The wide table is for diagnosis and carries the
+# raw triples; the model reads one score per population. See notebooks/text/2.3.
+SHAPE_FEATURE_COLUMNS = [
+    "n_total_sents",
+    "n_entity_sents",
+    "n_ceo_sents",
+    "n_boilerplate_sents",
+    "entity_share",
+    "article_length",
+]
+
+# Derived from two fusion columns each. Explicit rather than left to the caller,
+# for the reason fus_*_spread is: tree models split on single features and cannot
+# form a difference between two of them.
+DIVERGENCE_FEATURE_COLUMNS = ["fus_headline_gap", "fus_lead_gap"]
+
+MODEL_FEATURE_COLUMNS = [
+    *SHAPE_FEATURE_COLUMNS,
+    *FUSION_FEATURE_COLUMNS,   # 6, all conf_graft_floor
+    "fus_ceo_mean",
+    "fus_headline",
+    *fusion.EXTRA_FUSION_COLUMNS,
+    *DIVERGENCE_FEATURE_COLUMNS,
+]
+
+
+# One line per model feature, keyed exactly as MODEL_FEATURE_COLUMNS. Used to
+# emit the data dictionary that ships beside the parquet, so the description and
+# the column cannot drift apart.
+FEATURE_DESCRIPTIONS = {
+    "n_total_sents": "Sentences in the article after splitting, excluding scraper residue.",
+    "n_entity_sents": "Sentences tagged as being about the target, non-boilerplate.",
+    "n_ceo_sents": "Sentences mentioning the CEO but not the target itself.",
+    "n_boilerplate_sents": "Sentences whose exact text repeats across five or more articles.",
+    "entity_share": "n_entity_sents over the article's non-boilerplate sentence count.",
+    "article_length": "Characters in the article as published, boilerplate included.",
+    "fus_conf_graft_floor_mean": "Mean fused score over the target sentences.",
+    "fus_conf_graft_floor_median": "Median of the same population. Disagrees on sign with the mean on about a fifth of articles, so it detects skew.",
+    "fus_conf_graft_floor_lead": "Mean over target sentences in the opening window only. 0.0, not NaN, when the window holds none.",
+    "fus_conf_graft_floor_top3_pos": "Mean of the three highest sentence scores. Reads the tail rather than the centre.",
+    "fus_conf_graft_floor_top3_neg": "Mean of the three lowest sentence scores.",
+    "fus_conf_graft_floor_spread": "top3_pos minus top3_neg. Separates a contested article from a quiet one, which the mean cannot.",
+    "fus_ceo_mean": "Mean fused score over CEO-only sentences. NaN where the article has none.",
+    "fus_headline": "The headline through both scorers, grafted. One string, one number.",
+    "fus_maxmag": "Signed score of the single loudest target sentence, chosen by largest absolute fused score.",
+    "fus_trusted_mean": "Mean fused score over the surface and coref_span channels only, excluding the weakest-measured channel.",
+    "fus_scorer_gap": "Mean absolute difference between the two scorers over the target population. High means the article was contested between them.",
+    "fus_headline_gap": "fus_headline minus the body mean. How far the headline leads or lags the article.",
+    "fus_lead_gap": "The lead score minus the body mean. How far the opening leads or lags the rest.",
+}
+
+def headline_names_target(headlines_df: pd.DataFrame, ticker: str) -> pd.Series:
+    """Boolean mask: does each headline name the target explicitly?
+
+    Uses entity_filter's compiled "names" pattern rather than a local regex, so a
+    headline matches by the same rules a sentence does.
+
+    Only the "names" tier counts; the person tier does not, matching the sentence-level
+    rule that mentions_ceo never sets mentions_target.
+    """
+    pattern = entity_filter._build_ticker_patterns(ticker)["names"]
+    text = headlines_df["headline"].fillna("").astype(str)
+    if pattern is None:
+        return pd.Series(False, index=headlines_df.index)
+    return text.str.contains(pattern)
+
+
+def build_model_features(
+    sentences_df: pd.DataFrame,
+    headline_finbert: pd.DataFrame,
+    headline_absa: pd.DataFrame,
+    headlines_df: pd.DataFrame | None = None,
+    ticker: str = PRIMARY_TICKER,
+) -> pd.DataFrame:
+    """The lean, model-facing table: article_id + MODEL_FEATURE_COLUMNS.
+
+    Composed from the same functions the wide table uses, so the two cannot disagree.
+    `headline_finbert` and `headline_absa` are both required, since a fused headline
+    needs both scorers on the same string.
+
+    Every feature is NaN, never 0, where its population is empty.
+    """
+    wide = aggregate_article_features(sentences_df, headline_scores=headline_finbert)
+    ceo = fusion.aggregate_ceo_fusion_features(sentences_df)
+    head = fusion.headline_fusion_feature(headline_finbert, headline_absa)
+    extra = fusion.aggregate_extra_fusion_features(sentences_df)
+
+    out = (
+        wide[["article_id", *SHAPE_FEATURE_COLUMNS, *FUSION_FEATURE_COLUMNS]]
+        .merge(ceo, on="article_id", how="left")
+        .merge(head, on="article_id", how="left")
+        .merge(extra, on="article_id", how="left")
+    )
+    out = out.reindex(columns=["article_id", *MODEL_FEATURE_COLUMNS])
+
+    # Body OR headline: roughly a quarter of the articles with no target sentence
+    # in the body have an empty body, so filtering on the body alone would drop
+    # real articles because extraction failed.
+    if headlines_df is not None:
+        head_hit = headline_names_target(headlines_df, ticker)
+        relevant_ids = set(headlines_df.loc[head_hit, "article_id"])
+        keep = (out["n_entity_sents"] > 0) | out["article_id"].isin(relevant_ids)
+        out = out[keep].reset_index(drop=True)
+
+        # Headline-only articles: no body sentiment, and 0.0 on a signed score
+        # reads as exactly that. Decodable, since every filled row has
+        # n_entity_sents == 0 and no other row does.
+        filled = [*FUSION_FEATURE_COLUMNS, "fus_ceo_mean", *fusion.EXTRA_FUSION_COLUMNS]
+        body_absent = out["n_entity_sents"] == 0
+        out.loc[body_absent, filled] = out.loc[body_absent, filled].fillna(0.0)
+
+    # Derived last, so they read the filled body mean rather than the NaN it
+    # replaced. On a headline-only article the body mean is 0.0, so the headline
+    # gap is the headline score itself, which is the honest reading.
+    body_mean = out["fus_conf_graft_floor_mean"]
+    out["fus_headline_gap"] = out["fus_headline"] - body_mean
+    out["fus_lead_gap"] = out["fus_conf_graft_floor_lead"] - body_mean
+    return out[["article_id", *MODEL_FEATURE_COLUMNS]]

@@ -17,10 +17,12 @@ classifiers = [
 ]
 dependencies = [
     "bertopic",
+    "fastcoref",
     "finnhub-python",
     "ipython",
     "jupyterlab",
     "lightgbm",
+    "llama-cpp-python",
     "loguru",
     "lxml>=6.1.1",
     "matplotlib",
@@ -47,6 +49,12 @@ dependencies = [
 ]
 requires-python = "~=3.12.0"
 
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: hits a real model or the network; deselect with -m 'not slow'",
+]
 
 [tool.ruff]
 line-length = 99
