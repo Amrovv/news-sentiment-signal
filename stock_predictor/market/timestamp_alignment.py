@@ -23,12 +23,6 @@ def align_timestamp(pub_datetime: dt.datetime, schedule: pd.DataFrame) -> pd.Tim
     first_open = schedule["market_open"].iloc[0]
     last_open = schedule["market_open"].iloc[-1]
 
-    # Check that the pub date is within our timeframe
-    if (pub_ts > pd.Timestamp(NEWS_END_DATE, tz="UTC")) or (
-        pub_ts < pd.Timestamp(NEWS_START_DATE, tz="UTC")
-    ):
-        raise ValueError(f"Publication datetime {pub_ts} is outside the publication timeframe")
-
     # Check that the pub date is within schedule
     if (pub_ts > last_open) or (pub_ts < first_open):
         raise ValueError(
