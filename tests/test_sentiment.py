@@ -3,13 +3,16 @@ import pytest
 from pandas.testing import assert_frame_equal
 
 from stock_predictor.config import LEAD_SENTENCE_WINDOW
+from stock_predictor.text import fusion
 from stock_predictor.text import sentiment as sentiment_module
 from stock_predictor.text.fusion import AGGREGATED_VARIANTS, FUSION_AGGREGATIONS
 from stock_predictor.text.sentiment import (
     ABSA_FEATURE_COLUMNS,
     FUSION_FEATURE_COLUMNS,
+    MODEL_FEATURE_COLUMNS,
     aggregate_article_features,
     analyze,
+    build_model_features,
     hash_text,
     load_cache,
     needs_score,
@@ -884,6 +887,7 @@ def test_analyze_unchanged_keys(tmp_path):
         "n_entity_sents",
         "n_boilerplate_sents",
         "n_ceo_sents",
+        "has_ceo_mention",
         "n_total_sents",
         "entity_share",
         "article_length",
@@ -937,3 +941,162 @@ def test_analyze_does_not_touch_the_default_cache(tmp_path, monkeypatch):
         "explicit cache_path was given"
     )
     assert real_cache_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# build_model_features(): shrinkage + has_ceo_mention
+#
+# Findings from notebooks/2.1-aw-extended-merged-eda.ipynb sections 9.1, 9.2,
+# 10, 10.1: fus_conf_graft_floor_mean and fus_trusted_mean are population
+# means built from as few as one sentence, so a single extreme sentence reads
+# as the whole article's sentiment. Shrinking toward zero by population size
+# fixes it; fus_conf_graft_floor_lead, fus_lead_gap, and fus_ceo_mean got
+# worse under the same treatment and are shipped unshrunk.
+# ---------------------------------------------------------------------------
+
+
+def _empty_headline_frames():
+    headline_finbert = pd.DataFrame(columns=["article_id", "pos", "neg", "neu"])
+    headline_absa = pd.DataFrame(columns=["article_id", "absa_pos", "absa_neg", "absa_neu"])
+    return headline_finbert, headline_absa
+
+
+def test_build_model_features_shrinks_single_sentence_mean_toward_zero():
+    rows = [
+        _sent_row_with_absa(
+            1, 0, "Tesla obliterates every rival forever.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+        ),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    wide = aggregate_article_features(sentences_df)
+    raw_mean = wide.loc[wide["article_id"] == 1, "fus_conf_graft_floor_mean"].iloc[0]
+    n_entity = wide.loc[wide["article_id"] == 1, "n_entity_sents"].iloc[0]
+    assert n_entity == 1
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    shrunk = out.loc[out["article_id"] == 1, "fus_conf_graft_floor_mean"].iloc[0]
+
+    expected = fusion.shrink(raw_mean, n_entity, fusion.SHRINKAGE_K_ENTITY)
+    assert shrunk == pytest.approx(expected)
+    # n=1, K=4: shrink factor is 1/5, so this must pull hard toward zero.
+    assert abs(shrunk) < abs(raw_mean) * 0.3
+
+
+def test_build_model_features_large_population_barely_shrinks():
+    rows = [
+        _sent_row_with_absa(
+            2, i, f"Tesla sentence {i}.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+        )
+        for i in range(20)
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    wide = aggregate_article_features(sentences_df)
+    raw_mean = wide.loc[wide["article_id"] == 2, "fus_conf_graft_floor_mean"].iloc[0]
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    shrunk = out.loc[out["article_id"] == 2, "fus_conf_graft_floor_mean"].iloc[0]
+
+    # n=20, K=4: shrink factor is 20/24, close to but not exactly 1.
+    assert shrunk == pytest.approx(raw_mean * 20 / 24)
+    assert abs(shrunk - raw_mean) < abs(raw_mean) * 0.2
+
+
+def test_build_model_features_shrinks_trusted_mean_by_its_own_population():
+    # One surface (trusted) sentence, one coref_nospan (untrusted) sentence.
+    # fus_trusted_mean's population is 1, not 2, so it must shrink using
+    # n_trusted_sents, not n_entity_sents.
+    rows = [
+        _sent_row_with_absa(
+            3, 0, "Tesla surges on strong deliveries.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+        ),
+        _sent_row_with_absa(
+            3, 1, "It also raised guidance.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+        ),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    sentences_df.loc[1, "resolved_by_coref"] = True  # no mention_char_start -> coref_nospan
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    extra = fusion.aggregate_extra_fusion_features(sentences_df)
+    raw_trusted_mean = extra.loc[extra["article_id"] == 3, "fus_trusted_mean"].iloc[0]
+    n_trusted = extra.loc[extra["article_id"] == 3, "n_trusted_sents"].iloc[0]
+    assert n_trusted == 1
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    shrunk = out.loc[out["article_id"] == 3, "fus_trusted_mean"].iloc[0]
+
+    expected = fusion.shrink(raw_trusted_mean, n_trusted, fusion.SHRINKAGE_K_TRUSTED)
+    assert shrunk == pytest.approx(expected)
+
+
+def test_build_model_features_leaves_lead_and_ceo_columns_unshrunk():
+    rows = [
+        _sent_row_with_absa(
+            4, 0, "Tesla stock soars on record deliveries.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+        ),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    wide = aggregate_article_features(sentences_df)
+    raw_lead = wide.loc[wide["article_id"] == 4, "fus_conf_graft_floor_lead"].iloc[0]
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    lead = out.loc[out["article_id"] == 4, "fus_conf_graft_floor_lead"].iloc[0]
+
+    # Untouched: the lead column and its gap were found to get worse under
+    # shrinkage (notebook section 10.1) and are shipped raw.
+    assert lead == pytest.approx(raw_lead)
+
+
+def test_build_model_features_output_matches_model_feature_columns_exactly():
+    rows = [
+        _sent_row_with_absa(
+            5, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1, 0.7, 0.2, 0.1
+        ),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+
+    # n_trusted_sents is an internal input to the trusted-mean shrink and must
+    # not leak into the model-facing table.
+    assert list(out.columns) == ["article_id", *MODEL_FEATURE_COLUMNS]
+
+
+def test_build_model_features_has_ceo_mention_true_when_ceo_sentence_present():
+    rows = [
+        _sent_row_with_absa(
+            6, 0, "Musk announced a new factory.", False, True, 0.6, 0.2, 0.2, 0.5, 0.3, 0.2
+        ),
+    ]
+    rows[0]["mentions_ceo"] = True
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    row = out.loc[out["article_id"] == 6].iloc[0]
+
+    assert row["n_ceo_sents"] == 1
+    assert row["has_ceo_mention"] == True
+
+
+def test_build_model_features_has_ceo_mention_false_when_no_ceo_sentence():
+    rows = [
+        _sent_row_with_absa(
+            7, 0, "Tesla beat estimates.", True, False, 0.8, 0.1, 0.1, 0.7, 0.2, 0.1
+        ),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    row = out.loc[out["article_id"] == 7].iloc[0]
+
+    assert row["n_ceo_sents"] == 0
+    assert row["has_ceo_mention"] == False

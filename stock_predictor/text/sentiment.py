@@ -608,9 +608,12 @@ def analyze(
         row["n_total_sents"] = 0
         row["entity_share"] = 0
         row["article_length"] = 0
+        row["has_ceo_mention"] = False
         return row
 
-    return features_df.iloc[0].to_dict()
+    result = features_df.iloc[0].to_dict()
+    result["has_ceo_mention"] = result["n_ceo_sents"] > 0
+    return result
 
 
 # The model-facing feature table. The wide table is for diagnosis and carries the
@@ -633,6 +636,7 @@ MODEL_FEATURE_COLUMNS = [
     *SHAPE_FEATURE_COLUMNS,
     *FUSION_FEATURE_COLUMNS,  # 6, all conf_graft_floor
     "fus_ceo_mean",
+    "has_ceo_mention",
     "fus_headline",
     *fusion.EXTRA_FUSION_COLUMNS,
     *DIVERGENCE_FEATURE_COLUMNS,
@@ -656,6 +660,7 @@ FEATURE_DESCRIPTIONS = {
     "fus_conf_graft_floor_top3_neg": "Mean of the three lowest sentence scores.",
     "fus_conf_graft_floor_spread": "top3_pos minus top3_neg. Separates a contested article from a quiet one, which the mean cannot.",
     "fus_ceo_mean": "Mean fused score over CEO-only sentences. NaN where the article has none.",
+    "has_ceo_mention": "Whether the article has any CEO-only sentence (n_ceo_sents > 0). Robust to the headline-only 0-fill, unlike fus_ceo_mean.notna().",
     "fus_headline": "The headline through both scorers, grafted. One string, one number.",
     "fus_maxmag": "Signed score of the single loudest target sentence, chosen by largest absolute fused score.",
     "fus_trusted_mean": "Mean fused score over the surface and coref_span channels only, excluding the weakest-measured channel.",
@@ -707,7 +712,9 @@ def build_model_features(
         .merge(head, on="article_id", how="left")
         .merge(extra, on="article_id", how="left")
     )
-    out = out.reindex(columns=["article_id", *MODEL_FEATURE_COLUMNS])
+    # n_trusted_sents is a count: a left-merge miss means aggregate_extra_fusion_features
+    # never saw that article_id (empty target population), which genuinely is 0, not NaN.
+    out["n_trusted_sents"] = out["n_trusted_sents"].fillna(0)
 
     # Body OR headline: roughly a quarter of the articles with no target sentence
     # in the body have an empty body, so filtering on the body alone would drop
@@ -725,9 +732,22 @@ def build_model_features(
         body_absent = out["n_entity_sents"] == 0
         out.loc[body_absent, filled] = out.loc[body_absent, filled].fillna(0.0)
 
-    # Derived last, so they read the filled body mean rather than the NaN it
-    # replaced. On a headline-only article the body mean is 0.0, so the headline
-    # gap is the headline score itself, which is the honest reading.
+    # Small-sample shrinkage, in place on the same column names -- the raw vs.
+    # shrunk duality in notebooks/2.1 was an EDA device only. Population counts
+    # (n_entity_sents, n_trusted_sents) are always real here, filled above for
+    # rows with no sentence data.
+    out["fus_conf_graft_floor_mean"] = fusion.shrink(
+        out["fus_conf_graft_floor_mean"], out["n_entity_sents"], fusion.SHRINKAGE_K_ENTITY
+    )
+    out["fus_trusted_mean"] = fusion.shrink(
+        out["fus_trusted_mean"], out["n_trusted_sents"], fusion.SHRINKAGE_K_TRUSTED
+    )
+
+    out["has_ceo_mention"] = out["n_ceo_sents"] > 0
+
+    # Derived last, so they read the shrunk, filled body mean rather than the
+    # raw NaN it replaced. On a headline-only article the body mean is 0.0, so
+    # the headline gap is the headline score itself, which is the honest reading.
     body_mean = out["fus_conf_graft_floor_mean"]
     out["fus_headline_gap"] = out["fus_headline"] - body_mean
     out["fus_lead_gap"] = out["fus_conf_graft_floor_lead"] - body_mean
