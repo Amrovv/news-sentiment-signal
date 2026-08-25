@@ -30,6 +30,25 @@ DEADBAND = 0.0
 # value; see notebooks/fusion-weight-sweep.txt for the sweep behind it.
 CONF_FLOOR = 0.7
 
+# Small-sample shrinkage: shrunk = raw * n / (n + K). Pulls population means
+# built from few sentences toward zero, fixing single-sentence articles
+# spuriously landing at the extremes. Fixed constants, not refit per corpus,
+# so build_model_features() (batch) and analyze() (live) agree. Only the
+# two population-mean columns below benefit; conf_graft_floor_lead,
+# fus_lead_gap, and fus_ceo_mean got worse under shrinkage and are left
+# alone. See notebooks/2.1-aw-extended-merged-eda.ipynb sections 9.1, 9.2,
+# 10, 10.1 for the sweep and per-column results.
+SHRINKAGE_K_ENTITY = 4.0
+SHRINKAGE_K_TRUSTED = 4.0
+
+
+def shrink(raw, n, k):
+    """Small-sample shrinkage: raw * n / (n + k). n=0 -> 0.0, not NaN."""
+    n = pd.Series(n).astype(float)
+    factor = n / (n + k)
+    return raw * factor
+
+
 # One column name per fusion candidate. score_variants() returns exactly
 # these columns, in this order, named exactly as listed here.
 VARIANTS = (
@@ -400,10 +419,16 @@ def aggregate_extra_fusion_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
         fus_scorer_gap    mean |fin - absa| over the population: how far apart the
                           two scorers were, which no fused score records.
 
-    NaN, never 0, on an empty population.
+    Also returns n_trusted_sents (the trusted-channel population size behind
+    fus_trusted_mean) as an internal column, not part of EXTRA_FUSION_COLUMNS
+    since it's not a model feature itself — build_model_features() consumes
+    it for shrinkage and drops it.
+
+    NaN, never 0, on an empty population. n_trusted_sents is always a count
+    (0, not NaN, on an empty population).
     """
     if len(sentences_df) == 0:
-        return pd.DataFrame(columns=["article_id", *EXTRA_FUSION_COLUMNS])
+        return pd.DataFrame(columns=["article_id", *EXTRA_FUSION_COLUMNS, "n_trusted_sents"])
 
     df = sentences_df.copy().reset_index(drop=True)
     if "is_boilerplate" in df.columns:
@@ -435,8 +460,9 @@ def aggregate_extra_fusion_features(sentences_df: pd.DataFrame) -> pd.DataFrame:
                 ),
                 "fus_trusted_mean": trusted["__fus"].mean() if len(trusted) else float("nan"),
                 "fus_scorer_gap": gaps.mean() if len(gaps) else float("nan"),
+                "n_trusted_sents": len(trusted),
             }
         )
 
-    out = pd.DataFrame(rows, columns=["article_id", *EXTRA_FUSION_COLUMNS])
+    out = pd.DataFrame(rows, columns=["article_id", *EXTRA_FUSION_COLUMNS, "n_trusted_sents"])
     return out
