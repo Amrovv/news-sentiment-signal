@@ -24,10 +24,13 @@ from datetime import datetime, timezone
 
 import finnhub
 import pandas as pd
+import requests
 from loguru import logger
 
 from stock_predictor.config import (
     FETCH_CAP_WARN_COUNT,
+    FETCH_RETRY_ATTEMPTS,
+    FETCH_RETRY_BACKOFF_SECONDS,
     FINNHUB_API_KEY,
     NEWS_END_DATE,
     NEWS_START_DATE,
@@ -49,6 +52,39 @@ def get_client() -> finnhub.Client:
 def to_utc(ts: int) -> datetime:
     """Convert a unix timestamp (seconds) to a timezone-aware UTC datetime."""
     return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+
+def _fetch_window(client: finnhub.Client, ticker: str, start: pd.Timestamp, window_end: pd.Timestamp) -> list:
+    """Call company_news for one window, retrying a transient network error
+    up to FETCH_RETRY_ATTEMPTS times before giving up on this window alone.
+
+    Returns [] (not a raised exception) on final failure, so one dead window
+    doesn't cost the rest of a multi-minute pull -- logged as an error so the
+    gap it leaves is visible, and would show up in the fetch report's
+    per-day counts."""
+    last_exc = None
+    for attempt in range(1, FETCH_RETRY_ATTEMPTS + 1):
+        try:
+            return client.company_news(
+                ticker,
+                _from=start.strftime("%Y-%m-%d"),
+                to=window_end.strftime("%Y-%m-%d"),
+            )
+        except requests.exceptions.RequestException as e:
+            last_exc = e
+            if attempt < FETCH_RETRY_ATTEMPTS:
+                logger.warning(
+                    f"{ticker} {start:%Y-%m-%d}..{window_end:%Y-%m-%d} attempt "
+                    f"{attempt}/{FETCH_RETRY_ATTEMPTS} failed ({e!r}), retrying "
+                    f"in {FETCH_RETRY_BACKOFF_SECONDS}s"
+                )
+                time.sleep(FETCH_RETRY_BACKOFF_SECONDS)
+
+    logger.error(
+        f"{ticker} {start:%Y-%m-%d}..{window_end:%Y-%m-%d} failed after "
+        f"{FETCH_RETRY_ATTEMPTS} attempts, skipping this window: {last_exc!r}"
+    )
+    return []
 
 
 def pull_company_news(
@@ -76,11 +112,7 @@ def pull_company_news(
     while start <= end:
         window_end = min(start + pd.Timedelta(days=window_days - 1), end)
 
-        articles = client.company_news(
-            ticker,
-            _from=start.strftime("%Y-%m-%d"),
-            to=window_end.strftime("%Y-%m-%d"),
-        )
+        articles = _fetch_window(client, ticker, start, window_end)
         if len(articles) >= FETCH_CAP_WARN_COUNT:
             logger.warning(
                 f"{ticker} {start:%Y-%m-%d}..{window_end:%Y-%m-%d} returned "

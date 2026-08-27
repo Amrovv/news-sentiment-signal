@@ -13,12 +13,18 @@ this module.
 
 Run as `python -m stock_predictor.fetch.scrape TICKER` to scrape one
 ticker's `data/raw/{TICKER}_raw_articles.parquet` and write the accepted,
-processed rows to `data/interim/{TICKER}_processed_articles.parquet`.
-Nothing else runs on import.
+processed rows to `data/interim/{TICKER}_processed_articles.parquet`. The
+CLI runs in checkpointed chunks (`scrape_corpus_chunked`, SCRAPE_CHUNK_SIZE)
+since a full corpus is tens of thousands of articles and, at REQ_PER_SEC,
+well over an hour of continuous network I/O -- long enough that losing the
+whole run to one interruption (a killed process, a dropped connection, a
+machine restart) partway through is a real cost worth checkpointing against,
+not just a theoretical one. Nothing else runs on import.
 """
 
 import argparse
 import json
+import math
 import re
 import threading
 import time
@@ -39,10 +45,12 @@ from stock_predictor.config import (
     MIN_BODY_CHARS,
     OPEN_SOURCES,
     REQ_PER_SEC,
+    SCRAPE_CHUNK_SIZE,
     SCRAPE_HEADERS,
     SCRAPE_MAX_WORKERS,
     SCRAPE_TIMEOUT,
     processed_articles_path,
+    processed_chunk_dir,
     raw_articles_path,
 )
 
@@ -247,21 +255,66 @@ def scrape_corpus(articles: pd.DataFrame, max_workers: int = SCRAPE_MAX_WORKERS)
     ]].reset_index(drop=True)
 
 
+def scrape_corpus_chunked(
+    articles: pd.DataFrame,
+    ticker: str,
+    chunk_size: int = SCRAPE_CHUNK_SIZE,
+    max_workers: int = SCRAPE_MAX_WORKERS,
+) -> pd.DataFrame:
+    """Run scrape_corpus in fixed-size chunks over raw article rows,
+    checkpointing each chunk's result to `processed_chunk_dir(ticker)` before
+    starting the next.
+
+    A chunk whose checkpoint file already exists is loaded from disk and
+    skipped rather than re-scraped, so re-running after an interruption picks
+    up where it left off instead of starting over. Chunking is over raw rows,
+    not open-source rows, so chunk boundaries are stable across runs even
+    though scrape_corpus filters to OPEN_SOURCES internally.
+    """
+    chunk_dir = processed_chunk_dir(ticker)
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
+    n_chunks = math.ceil(len(articles) / chunk_size) if len(articles) else 0
+    results = []
+    for i in range(n_chunks):
+        chunk_path = chunk_dir / f"chunk_{i:04d}.parquet"
+        if chunk_path.exists():
+            logger.info(f"chunk {i + 1}/{n_chunks} already checkpointed, reusing {chunk_path}")
+            results.append(pd.read_parquet(chunk_path))
+            continue
+
+        chunk = articles.iloc[i * chunk_size : (i + 1) * chunk_size]
+        logger.info(f"scraping chunk {i + 1}/{n_chunks} ({len(chunk)} raw articles)")
+        result = scrape_corpus(chunk, max_workers=max_workers)
+        result.to_parquet(chunk_path, index=False)
+        logger.info(f"chunk {i + 1}/{n_chunks}: {len(result)} accepted -> {chunk_path}")
+        results.append(result)
+
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+
 def main() -> None:
-    """CLI entry point. Scrapes one ticker's raw pull and writes the
-    processed corpus to `data/interim/{TICKER}_processed_articles.parquet`."""
+    """CLI entry point. Scrapes one ticker's raw pull in checkpointed chunks
+    and writes the processed corpus to
+    `data/interim/{TICKER}_processed_articles.parquet`."""
     parser = argparse.ArgumentParser(
         description="Scrape a raw article pull into the processed corpus for one ticker."
     )
     parser.add_argument("ticker", help='Symbol whose raw pull to process, e.g. "TSLA".')
     parser.add_argument("--max-workers", type=int, default=SCRAPE_MAX_WORKERS)
+    parser.add_argument(
+        "--chunk-size", type=int, default=SCRAPE_CHUNK_SIZE,
+        help="Articles per checkpointed chunk.",
+    )
     args = parser.parse_args()
 
     in_path = raw_articles_path(args.ticker)
     articles = pd.read_parquet(in_path)
     logger.info(f"loaded {len(articles)} raw articles from {in_path}")
 
-    processed = scrape_corpus(articles, max_workers=args.max_workers)
+    processed = scrape_corpus_chunked(
+        articles, args.ticker, chunk_size=args.chunk_size, max_workers=args.max_workers
+    )
 
     out_path = processed_articles_path(args.ticker)
     out_path.parent.mkdir(parents=True, exist_ok=True)

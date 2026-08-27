@@ -136,6 +136,11 @@ def processed_articles_path(ticker: str) -> Path:
     """Where scrape.py's CLI writes one ticker's scraped, cleaned corpus."""
     return INTERIM_DATA_DIR / f"{ticker}_processed_articles.parquet"
 
+
+def processed_chunk_dir(ticker: str) -> Path:
+    """Where scrape.py's chunked run checkpoints each chunk's result."""
+    return INTERIM_DATA_DIR / f"{ticker}_processed_chunks"
+
 # `company_news` caps results per call regardless of window width and fills
 # most-recent-first (notebooks/modelling/3.0, section 6, diagnosed this as the
 # cause of the original pull's tail-of-month bursts). This is a conservative
@@ -144,6 +149,16 @@ def processed_articles_path(ticker: str) -> Path:
 # getting silently truncated the same way. The fetch report is what actually
 # confirms whether a given pull is steady, this is just a tripwire during it.
 FETCH_CAP_WARN_COUNT = 100
+
+# finnhub-python's client has no retry/backoff of its own (a bare
+# requests.Session, no HTTPAdapter/Retry mounted), and a daily-windowed pull
+# is ~365 calls where the old monthly one was ~13 -- one transient timeout
+# used to be rare enough to ignore, now it's close to guaranteed over a full
+# year. pull_company_news retries a failing window this many times, waiting
+# FETCH_RETRY_BACKOFF_SECONDS between attempts, before logging it as failed
+# and moving on rather than losing the whole run.
+FETCH_RETRY_ATTEMPTS = 3
+FETCH_RETRY_BACKOFF_SECONDS = 5
 
 # Sources found readable by the probe in notebooks/text/1.1-aw-scraper-probe.ipynb:
 # most requests reach a 200 and the body is long enough to be a real article.
@@ -162,6 +177,16 @@ SCRAPE_TIMEOUT = 12  # seconds
 MIN_BODY_CHARS = 500  # cleaned body shorter than this is a stub, cookie wall, or paywall teaser
 MAX_SHIFT_HOURS = 6  # a scraped time this far from the Finnhub API time is treated as a repost, not a correction
 REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
+
+# A full corpus can be tens of thousands of articles, and at REQ_PER_SEC that
+# is well over an hour of continuous network I/O -- a long enough window that
+# a killed process, a lost connection, or a machine restart partway through
+# is a real risk, not a hypothetical one. scrape.py's CLI runs in chunks of
+# this size, checkpointing each chunk's result to processed_chunk_dir()
+# before starting the next, so an interruption costs at most one chunk's
+# worth of work rather than the whole run, and a restart skips any chunk
+# whose checkpoint already exists.
+SCRAPE_CHUNK_SIZE = 500
 
 LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
 
