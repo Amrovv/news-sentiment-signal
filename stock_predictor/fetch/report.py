@@ -22,10 +22,14 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")  # headless: this module writes figures to disk, never shows them
+import matplotlib.pyplot as plt
 import pandas as pd
 from loguru import logger
 
-from stock_predictor.config import REPORTS_DIR, processed_articles_path, raw_articles_path
+from stock_predictor.config import FIGURES_DIR, REPORTS_DIR, processed_articles_path, raw_articles_path
 
 
 def _md_table(rows, header) -> str:
@@ -83,25 +87,80 @@ def burst_check(articles: pd.DataFrame, timestamp_col: str = "timestamp_utc") ->
     }
 
 
-def write_fetch_report(
-    articles: pd.DataFrame, ticker: str, timestamp_col: str = "timestamp_utc", path: Path | None = None
-) -> Path:
-    """Write `reports/{ticker}_fetch_report.md`: total articles, the monthly
-    and daily distribution, and the burst-check numbers above.
+def _plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str) -> Path:
+    """Bar chart of articles per calendar day over the corpus span, saved to
+    `reports/figures/{ticker}_{label}_fetch_daily.png`.
 
-    `path` overrides the default `REPORTS_DIR / f"{ticker}_fetch_report.md"`,
-    mainly so a test or a one-off comparison run can write elsewhere without
-    clobbering the real report.
+    A day-by-day markdown table gets unreadable past a few dozen rows; the
+    burst pattern this report exists to catch (or rule out) is exactly the
+    kind of shape -- long flat gaps, tight clusters -- that a chart shows at
+    a glance and a table buries.
+    """
+    fig, ax = plt.subplots(figsize=(13, 4))
+    ax.bar(daily_counts.index, daily_counts.values, width=1.0, color="#4C72B0")
+    ax.set_title(f"{ticker} ({label}): articles per day")
+    ax.set_xlabel("day")
+    ax.set_ylabel("articles")
+    fig.autofmt_xdate()
+    fig.tight_layout()
+
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig_path = FIGURES_DIR / f"{ticker}_{label}_fetch_daily.png"
+    fig.savefig(fig_path, dpi=120)
+    plt.close(fig)
+    return fig_path
+
+
+def _plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str) -> Path:
+    """Bar chart of articles per calendar month over the corpus span, saved
+    to `reports/figures/{ticker}_{label}_fetch_monthly.png`.
+
+    Alongside the monthly table, not instead of it -- a dozen or so months
+    reads fine as a table, but a chart is what makes an uneven, tail-heavy
+    month (the original bug's signature) jump out immediately.
+    """
+    months = per_month.index.astype(str)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.bar(months, per_month["articles"].values, color="#55A868")
+    ax.set_title(f"{ticker} ({label}): articles per month")
+    ax.set_xlabel("month")
+    ax.set_ylabel("articles")
+    fig.autofmt_xdate()
+    fig.tight_layout()
+
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig_path = FIGURES_DIR / f"{ticker}_{label}_fetch_monthly.png"
+    fig.savefig(fig_path, dpi=120)
+    plt.close(fig)
+    return fig_path
+
+
+def write_fetch_report(
+    articles: pd.DataFrame,
+    ticker: str,
+    timestamp_col: str = "timestamp_utc",
+    label: str = "raw",
+    path: Path | None = None,
+) -> Path:
+    """Write `reports/{ticker}_{label}_fetch_report.md`: total articles, the
+    monthly and daily distribution, and the burst-check numbers above.
+
+    `label` distinguishes which corpus this is (e.g. "raw" vs "processed")
+    so reports for the same ticker don't overwrite each other -- it's a free
+    -text tag for the filename and headings, not tied to any dataset schema.
+    `path` overrides the default `REPORTS_DIR / f"{ticker}_{label}_fetch_report.md"`
+    entirely, mainly so a test or a one-off comparison run can write elsewhere
+    without clobbering the real report.
     """
     check = burst_check(articles, timestamp_col=timestamp_col)
     daily_counts = check["daily_counts"]
     per_month = check["per_month"]
 
     md = []
-    md.append(f"# {ticker} fetch report\n")
+    md.append(f"# {ticker} fetch report ({label})\n")
     md.append(
         f"Generated {datetime.now(UTC):%Y-%m-%d %H:%M} UTC from "
-        f"{len(articles):,} pulled articles.\n"
+        f"{len(articles):,} {label} articles.\n"
     )
 
     md.append("## 1. Overview\n")
@@ -132,12 +191,16 @@ def write_fetch_report(
         ],
         ["month", "articles", "active days"],
     ))
+    monthly_fig_path = _plot_monthly_counts(per_month, ticker, label)
+    md.append(f"\n![{ticker} articles per month](figures/{monthly_fig_path.name})\n")
 
+    fig_path = _plot_daily_counts(daily_counts, ticker, label)
     md.append("\n## 3. Articles by day\n")
-    md.append(_md_table(
-        [(f"{d:%Y-%m-%d}", int(c)) for d, c in daily_counts.items()],
-        ["day", "articles"],
-    ))
+    md.append(
+        f"min {int(daily_counts.min())}, median {int(daily_counts.median())}, "
+        f"max {int(daily_counts.max())} articles/day.\n"
+    )
+    md.append(f"\n![{ticker} articles per day](figures/{fig_path.name})\n")
 
     md.append("\n## 4. Burst check\n")
     md.append(
@@ -151,14 +214,14 @@ def write_fetch_report(
     )
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = path or REPORTS_DIR / f"{ticker}_fetch_report.md"
+    out_path = path or REPORTS_DIR / f"{ticker}_{label}_fetch_report.md"
     out_path.write_text("\n".join(md), encoding="utf-8")
     return out_path
 
 
 def main() -> None:
     """CLI entry point. Runs the burst check against one ticker's saved
-    corpus and writes `reports/{TICKER}_fetch_report.md`."""
+    corpus and writes `reports/{TICKER}_{dataset}_fetch_report.md`."""
     parser = argparse.ArgumentParser(description="Write a fetch report for one ticker's corpus.")
     parser.add_argument("ticker", help='Symbol whose corpus to report on, e.g. "TSLA".')
     parser.add_argument(
@@ -174,7 +237,7 @@ def main() -> None:
     articles = pd.read_parquet(in_path)
     logger.info(f"loaded {len(articles)} articles from {in_path}")
 
-    out_path = write_fetch_report(articles, args.ticker)
+    out_path = write_fetch_report(articles, args.ticker, label=args.dataset)
     logger.info(f"wrote {out_path}")
 
 

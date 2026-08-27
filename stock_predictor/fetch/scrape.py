@@ -41,6 +41,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from stock_predictor.config import (
+    MAX_CROSS_HOST_SHIFT_DAYS,
     MAX_SHIFT_HOURS,
     MIN_BODY_CHARS,
     OPEN_SOURCES,
@@ -145,13 +146,20 @@ def _to_utc(value):
 
 def _resolve_time(candidate, api_utc, cross_host):
     """Pick the trustworthy time, with the API time as the floor: trust a
-    cross-host original outright, a same-host time only within
-    MAX_SHIFT_HOURS, else keep the API time so no article is dropped for
-    want of a page time."""
+    cross-host original within MAX_CROSS_HOST_SHIFT_DAYS of the API time, a
+    same-host time only within MAX_SHIFT_HOURS, else keep the API time so no
+    article is dropped for want of a page time.
+
+    The cross-host bound exists because "the original outlet's own page" is
+    not the same guarantee as "this story is from now" -- a genuinely old,
+    re-referenced story can surface in the feed with a fresh API timestamp
+    and a years-old canonical date."""
     if candidate is None:
         return api_utc, "api"
     if cross_host:
-        return candidate, "corrected"
+        if abs((candidate - api_utc).total_seconds()) <= MAX_CROSS_HOST_SHIFT_DAYS * 86400:
+            return candidate, "corrected"
+        return api_utc, "api"
     if abs((candidate - api_utc).total_seconds()) <= MAX_SHIFT_HOURS * 3600:
         return candidate, "corrected"
     return api_utc, "api"

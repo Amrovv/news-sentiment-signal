@@ -176,6 +176,14 @@ SCRAPE_MAX_WORKERS = 8
 SCRAPE_TIMEOUT = 12  # seconds
 MIN_BODY_CHARS = 500  # cleaned body shorter than this is a stub, cookie wall, or paywall teaser
 MAX_SHIFT_HOURS = 6  # a scraped time this far from the Finnhub API time is treated as a repost, not a correction
+
+# A cross-host canonical is normally trusted outright (it's the original
+# outlet's own page), but that has no floor against a genuinely old,
+# re-referenced story surfacing in Finnhub's feed years after it first ran --
+# found in practice: a 2023 CNN article scored into a 2025-2026 pull. Cap how
+# far a cross-host date may diverge from the Finnhub API time before it's
+# rejected back to the API time instead of trusted.
+MAX_CROSS_HOST_SHIFT_DAYS = 30
 REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
 
 # A full corpus can be tens of thousands of articles, and at REQ_PER_SEC that
