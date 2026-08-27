@@ -1,22 +1,38 @@
 """Pull raw company news from Finnhub's `company_news` endpoint.
 
-Finnhub's free tier caps how many articles a single call returns, so a wide
-date-range request silently truncates. `pull_company_news` works around that
-by requesting month by month and concatenating the result.
+`company_news` returns a fixed-size cap of results per call regardless of how
+wide the requested date range is, filled most-recent-first --
+`notebooks/modelling/3.0` section 6 confirmed this: whole-month requests
+against the original pull returned a consistent 126-191 articles per month no
+matter how wide the active window inside it was, silently dropping every day
+but the last few. `pull_company_news` avoids that by requesting narrow, fixed
+windows (`window_days`, one day by default) and concatenating the result, so
+no single call's article count gets anywhere near the cap.
 
 Ported from `notebooks/text/1.0-aw-corpus.ipynb`, which is left untouched as
-a historical record of the original pull and does not import this module.
+a historical record of the original, monthly-windowed pull and does not
+import this module.
 
-Nothing runs on import.
+Run as `python -m stock_predictor.fetch.finnhub_pull TICKER` to pull one
+ticker's raw corpus and write it to `data/raw/{TICKER}_raw_articles.parquet`.
+Nothing else runs on import.
 """
 
+import argparse
 import time
 from datetime import datetime, timezone
 
 import finnhub
 import pandas as pd
+from loguru import logger
 
-from stock_predictor.config import FINNHUB_API_KEY
+from stock_predictor.config import (
+    FETCH_CAP_WARN_COUNT,
+    FINNHUB_API_KEY,
+    NEWS_END_DATE,
+    NEWS_START_DATE,
+    raw_articles_path,
+)
 
 _client = None
 
@@ -35,12 +51,22 @@ def to_utc(ts: int) -> datetime:
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
-def pull_company_news(ticker: str, _from: str, to: str, pause: float = 0) -> pd.DataFrame:
-    """Pull company news month by month and return it as a DataFrame.
+def pull_company_news(
+    ticker: str, _from: str, to: str, window_days: int = 1, pause: float = 1.0
+) -> pd.DataFrame:
+    """Pull company news in fixed-size day windows and return it as a DataFrame.
 
     ticker: symbol to query, e.g. "TSLA".
     _from, to: inclusive date bounds as 'YYYY-MM-DD' strings.
-    pause: seconds to sleep between calls, keeping us under 60 calls/min.
+    window_days: size of each query window, in days. 1 by default, so a
+        single busy day's article count is the only thing that can approach
+        the per-call cap, not a whole month's. Widen only after checking the
+        fetch report (`stock_predictor.fetch.report`) shows no warning at the
+        chosen width.
+    pause: seconds to sleep between calls, keeping us under 60 calls/min. A
+        daily window means far more calls than the old monthly one (roughly
+        one per day in range rather than one per month), so this defaults to
+        1s rather than 0.
     """
     client = get_client()
     rows = []
@@ -48,14 +74,21 @@ def pull_company_news(ticker: str, _from: str, to: str, pause: float = 0) -> pd.
     end = pd.Timestamp(to)
 
     while start <= end:
-        # Last day of the current month, or the overall end if it comes first.
-        month_end = min(start + pd.offsets.MonthEnd(0), end)
+        window_end = min(start + pd.Timedelta(days=window_days - 1), end)
 
         articles = client.company_news(
             ticker,
             _from=start.strftime("%Y-%m-%d"),
-            to=month_end.strftime("%Y-%m-%d"),
+            to=window_end.strftime("%Y-%m-%d"),
         )
+        if len(articles) >= FETCH_CAP_WARN_COUNT:
+            logger.warning(
+                f"{ticker} {start:%Y-%m-%d}..{window_end:%Y-%m-%d} returned "
+                f"{len(articles)} articles, at or above FETCH_CAP_WARN_COUNT "
+                f"({FETCH_CAP_WARN_COUNT}) -- this window may be getting "
+                f"capped the same way the original monthly pull was; narrow "
+                f"window_days and re-pull this range."
+            )
         for a in articles:
             rows.append(
                 {
@@ -68,7 +101,49 @@ def pull_company_news(ticker: str, _from: str, to: str, pause: float = 0) -> pd.
                 }
             )
 
-        start = month_end + pd.Timedelta(days=1)
+        start = window_end + pd.Timedelta(days=1)
         time.sleep(pause)
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    # A narrow window_days means far more window boundaries than the old
+    # monthly pull had (roughly one per day in range, not one per month), so
+    # the same article landing in two adjacent windows -- a boundary
+    # timestamp, API timezone slop -- is a real risk here in a way it barely
+    # was before. Dedupe at the source rather than downstream, since a
+    # duplicate article_id surviving into a merge elsewhere (e.g.
+    # scrape_corpus) multiplies rather than just double-counts.
+    n_dupes = df["article_id"].duplicated().sum() if len(df) else 0
+    if n_dupes:
+        logger.warning(f"{ticker}: dropping {n_dupes} duplicate article_id rows from overlapping windows")
+        df = df.drop_duplicates(subset="article_id", keep="first").reset_index(drop=True)
+
+    return df
+
+
+def main() -> None:
+    """CLI entry point. Pulls one ticker's raw corpus and writes it to
+    `data/raw/{TICKER}_raw_articles.parquet`."""
+    parser = argparse.ArgumentParser(description="Pull raw Finnhub company news for one ticker.")
+    parser.add_argument("ticker", help='Symbol to query, e.g. "TSLA".')
+    parser.add_argument("--from", dest="_from", default=NEWS_START_DATE, help="Inclusive start date, YYYY-MM-DD.")
+    parser.add_argument("--to", dest="to", default=NEWS_END_DATE, help="Inclusive end date, YYYY-MM-DD.")
+    parser.add_argument("--window-days", type=int, default=1, help="Size of each query window, in days.")
+    parser.add_argument("--pause", type=float, default=1.0, help="Seconds to sleep between calls.")
+    args = parser.parse_args()
+
+    logger.info(
+        f"pulling {args.ticker} news {args._from}..{args.to} (window_days={args.window_days})"
+    )
+    articles = pull_company_news(
+        args.ticker, args._from, args.to, window_days=args.window_days, pause=args.pause
+    )
+
+    out_path = raw_articles_path(args.ticker)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    articles.to_parquet(out_path, index=False)
+    logger.info(f"wrote {len(articles)} articles to {out_path}")
+
+
+if __name__ == "__main__":
+    main()

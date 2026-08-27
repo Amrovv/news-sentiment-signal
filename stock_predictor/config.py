@@ -120,8 +120,30 @@ NEWS_END_DATE = "2026-08-01"
 MIN_USABLE_ARTICLES = 1500  # below -> fallback dataset
 
 # --- Article fetch (Goal 1) --------------------------------------------------
-# Raw Finnhub pull, before the scrape stage resolves source/time/body.
+# Raw Finnhub pull, before the scrape stage resolves source/time/body. This
+# single-file constant is what the existing TSLA-only run_pipeline.py reads;
+# raw_articles_path()/processed_articles_path() below are the per-ticker forms
+# the fetch package's own CLIs (finnhub_pull.py, scrape.py) read and write.
 RAW_ARTICLES_PATH = RAW_DATA_DIR / "raw_articles.parquet"
+
+
+def raw_articles_path(ticker: str) -> Path:
+    """Where finnhub_pull.py's CLI writes one ticker's raw pull."""
+    return RAW_DATA_DIR / f"{ticker}_raw_articles.parquet"
+
+
+def processed_articles_path(ticker: str) -> Path:
+    """Where scrape.py's CLI writes one ticker's scraped, cleaned corpus."""
+    return INTERIM_DATA_DIR / f"{ticker}_processed_articles.parquet"
+
+# `company_news` caps results per call regardless of window width and fills
+# most-recent-first (notebooks/modelling/3.0, section 6, diagnosed this as the
+# cause of the original pull's tail-of-month bursts). This is a conservative
+# early-warning line, not a confirmed cap value: pull_company_news logs a
+# warning if any single call's count reaches it, since that call may be
+# getting silently truncated the same way. The fetch report is what actually
+# confirms whether a given pull is steady, this is just a tripwire during it.
+FETCH_CAP_WARN_COUNT = 100
 
 # Sources found readable by the probe in notebooks/text/1.1-aw-scraper-probe.ipynb:
 # most requests reach a 200 and the body is long enough to be a real article.

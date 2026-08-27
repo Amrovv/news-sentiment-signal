@@ -11,9 +11,13 @@ Ported from `notebooks/text/1.2-aw-clean-and-convert.ipynb`, which is left
 untouched as a historical record of the original run and does not import
 this module.
 
-Nothing runs on import.
+Run as `python -m stock_predictor.fetch.scrape TICKER` to scrape one
+ticker's `data/raw/{TICKER}_raw_articles.parquet` and write the accepted,
+processed rows to `data/interim/{TICKER}_processed_articles.parquet`.
+Nothing else runs on import.
 """
 
+import argparse
 import json
 import re
 import threading
@@ -26,16 +30,20 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
+from loguru import logger
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from stock_predictor.config import (
     MAX_SHIFT_HOURS,
     MIN_BODY_CHARS,
+    OPEN_SOURCES,
     REQ_PER_SEC,
     SCRAPE_HEADERS,
     SCRAPE_MAX_WORKERS,
     SCRAPE_TIMEOUT,
+    processed_articles_path,
+    raw_articles_path,
 )
 
 
@@ -209,3 +217,60 @@ def run_pipeline(articles: pd.DataFrame, max_workers: int = SCRAPE_MAX_WORKERS) 
         for f in as_completed(futs):
             results[futs[f]] = f.result()
     return pd.DataFrame(results)
+
+
+def scrape_corpus(articles: pd.DataFrame, max_workers: int = SCRAPE_MAX_WORKERS) -> pd.DataFrame:
+    """Filter to OPEN_SOURCES, run the scrape pipeline, and return the
+    accepted rows: real source, corrected UTC time, and clean body text.
+
+    An article is rejected only for a body that never reaches
+    MIN_BODY_CHARS -- time always resolves against the API floor, so text is
+    the only gate.
+    """
+    open_articles = articles[articles["source"].isin(OPEN_SOURCES)].copy()
+    results = run_pipeline(open_articles, max_workers=max_workers)
+    merged = open_articles.merge(
+        results[[
+            "article_id", "true_source", "utc", "raw_body", "processed_body",
+            "status", "source_ok", "corrected", "time_source", "text_ok", "n_fetch",
+        ]],
+        on="article_id", how="left",
+    )
+
+    accept = merged["text_ok"]
+    proc = merged[accept].copy()
+    proc["source"] = proc["true_source"].where(proc["source_ok"], proc["source"])
+    proc["timestamp_utc"] = proc["utc"]
+    return proc[[
+        "article_id", "headline", "summary", "source", "url",
+        "timestamp_utc", "raw_body", "processed_body",
+    ]].reset_index(drop=True)
+
+
+def main() -> None:
+    """CLI entry point. Scrapes one ticker's raw pull and writes the
+    processed corpus to `data/interim/{TICKER}_processed_articles.parquet`."""
+    parser = argparse.ArgumentParser(
+        description="Scrape a raw article pull into the processed corpus for one ticker."
+    )
+    parser.add_argument("ticker", help='Symbol whose raw pull to process, e.g. "TSLA".')
+    parser.add_argument("--max-workers", type=int, default=SCRAPE_MAX_WORKERS)
+    args = parser.parse_args()
+
+    in_path = raw_articles_path(args.ticker)
+    articles = pd.read_parquet(in_path)
+    logger.info(f"loaded {len(articles)} raw articles from {in_path}")
+
+    processed = scrape_corpus(articles, max_workers=args.max_workers)
+
+    out_path = processed_articles_path(args.ticker)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    processed.to_parquet(out_path, index=False)
+    logger.info(
+        f"accepted {len(processed)} of {(articles['source'].isin(OPEN_SOURCES)).sum()} "
+        f"open articles -> {out_path}"
+    )
+
+
+if __name__ == "__main__":
+    main()
