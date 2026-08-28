@@ -244,6 +244,26 @@ EVAL_CONTEXT_FOLLOWING = 1
 # ABSA and fastcoref. Not tracked; models/ is gitignored.
 JUDGE_MODEL_PATH = MODELS_DIR / "gguf" / "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
 
+# GPU layers to offload for the judge model, when a CUDA-capable llama-cpp-python
+# build is installed: -1 offloads every layer (fastest, tried first), 0 forces
+# CPU-only (the original, always-viable path this project was built around).
+# CPU-viable was a real constraint, not a preference -- keep 0 working.
+JUDGE_N_GPU_LAYERS = -1
+
+# Batch sizes and flash attention for the GPU path. Measured on an RTX 2070
+# Super, real judge prompts via the actual pipeline on the true unmodified
+# CPU-only build: 5.5s/row (CPU) to 0.20-0.22s/row at these settings, ~27x.
+# Both are ignored (harmlessly) when running CPU-only.
+JUDGE_N_BATCH = 1024
+JUDGE_N_UBATCH = 1024
+JUDGE_FLASH_ATTN = True
+
+# Quantized KV cache type for the GPU path (ggml type id: 8 = q8_0). Cuts KV
+# cache memory-bandwidth cost a bit further; negligible accuracy risk for a
+# single-word yes/no/unsure classification. None leaves llama.cpp's default
+# (f16) in place -- the safe fallback if this ever needs disabling.
+JUDGE_KV_CACHE_TYPE = 8
+
 # --- Sentiment scoring (Goal 3) ---
 FINBERT_MODEL = "ProsusAI/finbert"
 MAX_TOKENS = 512

@@ -17,17 +17,21 @@ classifiers = [
 ]
 dependencies = [
     "bertopic",
+    "en-core-web-sm",
     "fastcoref",
     "finnhub-python",
     "ipython",
     "jupyterlab",
     "lightgbm",
-    "llama-cpp-python",
+    "llama-cpp-python==0.3.4",
     "loguru",
     "lxml>=6.1.1",
     "matplotlib",
     "notebook",
     "numpy",
+    "nvidia-cublas-cu12",
+    "nvidia-cuda-nvrtc-cu12",
+    "nvidia-cuda-runtime-cu12",
     "pandas",
     "pandas-market-calendars",
     "pip",
@@ -38,9 +42,11 @@ dependencies = [
     "scikit-learn",
     "seaborn",
     "sentence-transformers",
+    "sentencepiece>=0.2.2",
     "shap",
     "spacy",
     "streamlit",
+    "tiktoken>=0.14.0",
     "torch",
     "tqdm",
     "transformers",
@@ -49,6 +55,15 @@ dependencies = [
 ]
 requires-python = "~=3.12.0"
 
+
+[tool.uv.sources]
+llama-cpp-python = { index = "llama-cpp-python-cuda" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
+
+[[tool.uv.index]]
+name = "llama-cpp-python-cuda"
+url = "https://abetlen.github.io/llama-cpp-python/whl/cu121"
+explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
