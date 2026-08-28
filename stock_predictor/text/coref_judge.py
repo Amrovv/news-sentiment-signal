@@ -344,7 +344,11 @@ def judge_corpus(
     )
 
     cache = load_judge_cache(**cache_kwargs)
-    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    mine = cache[
+        (cache["target"] == target)
+        & (cache["model_id"] == model_id)
+        & (cache["prompt_version"] == prompt_version)
+    ]
     answered = set(zip(mine["article_id"], mine["sent_idx"]))
     keys = pd.Series(list(zip(pop["article_id"], pop["sent_idx"])), index=pop.index, dtype=object)
     todo = pop[~keys.isin(answered)] if len(pop) else pop
@@ -403,7 +407,11 @@ def judge_corpus(
                 )
 
     cache = load_judge_cache(**cache_kwargs)
-    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    mine = cache[
+        (cache["target"] == target)
+        & (cache["model_id"] == model_id)
+        & (cache["prompt_version"] == prompt_version)
+    ]
     out = out.merge(
         mine[["article_id", "sent_idx", "answer"]].rename(columns={"answer": "judge_answer"}),
         on=["article_id", "sent_idx"],
