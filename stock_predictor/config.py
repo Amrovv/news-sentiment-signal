@@ -280,6 +280,13 @@ COREF_MODEL = "biu-nlp/f-coref"
 # than the same number on both.
 COREF_BATCH_SIZE = 10000
 COREF_BATCH_SIZE_GPU = 1500
+
+# Documents per predict() call. fastcoref holds every prediction it has made
+# until the call returns, and on a GPU those carry device tensors, so one call
+# over a whole corpus grows until the card is full regardless of how small
+# max_tokens_in_batch is. Chunking bounds that, and gives the cache something to
+# save partway through a long resolve rather than only at the end.
+COREF_DOC_CHUNK = 500
 # Default for entity_filter.process_articles(use_coref=...). Best-effort: a
 # missing backend logs one warning and every sentence is tagged from explicit
 # names alone. resolved_by_coref records which rows the model spoke for.

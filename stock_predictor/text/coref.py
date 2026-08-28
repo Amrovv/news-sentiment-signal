@@ -22,6 +22,7 @@ into one column. Saves MERGE with the cache loaded at call start.
 
 import json
 import logging
+import time
 
 from loguru import logger
 import pandas as pd
@@ -30,6 +31,7 @@ from stock_predictor.config import (
     COREF_BATCH_SIZE,
     COREF_BATCH_SIZE_GPU,
     COREF_CACHE_PATH,
+    COREF_DOC_CHUNK,
     COREF_MODEL,
 )
 from stock_predictor.text.sentiment import hash_text
@@ -172,11 +174,53 @@ def save_cache(cache_df: pd.DataFrame, path=COREF_CACHE_PATH) -> None:
     logger.info(f"Saved coreference cache with {len(deduped)} entries to {path}")
 
 
+def _extract_clusters(pred) -> list[Cluster]:
+    """Pull (start, end) spans out of one fastcoref prediction, skipping anything
+    malformed.
+
+    A prediction that came back from a degraded inference pass can carry None in
+    place of a span, which unpacking blindly turns into a TypeError thousands of
+    documents into a resolve. A document whose spans cannot be read is worth
+    dropping to explicit-name tagging; it is not worth losing the corpus over.
+    """
+    clusters: list[Cluster] = []
+    try:
+        raw_clusters = pred.get_clusters(as_strings=False)
+    except Exception as exc:  # noqa: BLE001 - a bad prediction degrades to no clusters
+        logger.warning(f"Unreadable coreference prediction ({type(exc).__name__}: {exc})")
+        return clusters
+
+    for cluster in raw_clusters or []:
+        spans: Cluster = []
+        for span in cluster or []:
+            try:
+                start, end = span
+                spans.append((int(start), int(end)))
+            except (TypeError, ValueError):
+                continue
+        if spans:
+            clusters.append(spans)
+    return clusters
+
+
+def _free_device_memory() -> None:
+    """Return anything the last inference call left on the GPU. No-op on CPU."""
+    if _DEVICE != "cuda":
+        return
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+    except Exception as exc:  # noqa: BLE001 - freeing memory must never fail a run
+        logger.warning(f"Could not empty the CUDA cache ({type(exc).__name__}: {exc})")
+
+
 def resolve_documents(
     texts: list[str],
     batch_size: int | None = None,
     cache_path=COREF_CACHE_PATH,
     use_cache: bool = True,
+    doc_chunk: int = COREF_DOC_CHUNK,
 ) -> list[list[Cluster]]:
     """Resolve coreference over a batch of documents, with an on-disk cache.
 
@@ -246,26 +290,59 @@ def resolve_documents(
 
     logger.info(
         f"Resolving coreference over {len(payload)} documents "
-        f"(max {batch_size} tokens per batch, {_DEVICE or 'cpu'})"
+        f"(max {batch_size} tokens per batch, {doc_chunk} docs per call, {_DEVICE or 'cpu'})"
     )
-    try:
-        preds = model.predict(texts=payload, max_tokens_in_batch=batch_size)
-    except Exception as exc:  # noqa: BLE001 - inference failure must degrade
-        logger.warning(
-            f"Coreference inference failed ({type(exc).__name__}: {exc}); "
-            "tagging will use explicit company names only"
-        )
-        return out
 
     resolved: dict[str, list[Cluster]] = {}
     n_clusters = 0
-    for h, pred in zip(run_hashes, preds):
-        clusters = [
-            [(int(s), int(e)) for s, e in cluster]
-            for cluster in pred.get_clusters(as_strings=False)
-        ]
-        resolved[h] = clusters
-        n_clusters += len(clusters)
+    start = time.time()
+
+    for offset in range(0, len(payload), doc_chunk):
+        chunk_hashes = run_hashes[offset : offset + doc_chunk]
+        chunk_texts = payload[offset : offset + doc_chunk]
+
+        try:
+            preds = model.predict(texts=chunk_texts, max_tokens_in_batch=batch_size)
+        except Exception as exc:  # noqa: BLE001 - one chunk failing must not lose the rest
+            logger.warning(
+                f"Coreference inference failed on documents "
+                f"{offset}-{offset + len(chunk_texts)} ({type(exc).__name__}: {exc}); "
+                "those are tagged on explicit names only"
+            )
+            preds = []
+
+        for h, pred in zip(chunk_hashes, preds):
+            clusters = _extract_clusters(pred)
+            resolved[h] = clusters
+            n_clusters += len(clusters)
+
+        # Drop the predictions before the next call rather than after the loop:
+        # holding them is what fills the card in the first place.
+        del preds
+        _free_device_memory()
+
+        done = min(offset + doc_chunk, len(payload))
+        rate = (time.time() - start) / done
+        logger.info(
+            f"Coreference: {done}/{len(payload)} ({done / len(payload):.1%}) "
+            f"{rate:.2f}s/doc ~{(len(payload) - done) * rate / 60:.1f}m left"
+        )
+
+        # Saved per chunk, so an interrupt or a failure later in the corpus keeps
+        # what is already resolved. cache_df carries the accumulated union, and
+        # save_cache dedupes on text_hash keeping the last.
+        if use_cache and resolved:
+            new_rows = pd.DataFrame(
+                [
+                    {"text_hash": rh, "clusters_json": _serialize_clusters(resolved[rh])}
+                    for rh in chunk_hashes
+                    if rh in resolved
+                ],
+                columns=CACHE_COLUMNS,
+            )
+            if len(new_rows):
+                cache_df = pd.concat([cache_df, new_rows], ignore_index=True)
+                save_cache(cache_df, path=cache_path)
 
     for i in keep_idx:
         h = hashes[i]
@@ -273,17 +350,5 @@ def resolve_documents(
             out[i] = resolved[h]
 
     logger.info(f"Coreference produced {n_clusters} clusters across {len(payload)} documents")
-
-    if use_cache and resolved:
-        new_rows = pd.DataFrame(
-            [
-                {"text_hash": h, "clusters_json": _serialize_clusters(c)}
-                for h, c in resolved.items()
-            ],
-            columns=CACHE_COLUMNS,
-        )
-        # Merge, never replace: `resolved` covers only this call's misses, so
-        # saving it alone would drop every previously cached document.
-        save_cache(pd.concat([cache_df, new_rows], ignore_index=True), path=cache_path)
 
     return out
