@@ -1,6 +1,6 @@
 # TSLA fetch report (processed)
 
-Generated 2026-08-27 20:48 UTC from 9,726 processed articles.
+Generated 2026-08-27 22:22 UTC from 9,726 processed articles.
 
 ## 1. Overview
 
@@ -43,4 +43,8 @@ min 1, median 27, max 108 articles/day.
 
 ## 4. Burst check
 
-The original Finnhub pull clustered into roughly 13 tail-of-month bursts: 92 of 351 days active (26.2%), gaps up to 27 days, traced to `company_news` capping results per call and backfilling from the most recent news first (`notebooks/modelling/3.0`, section 6). Section 1 and 2 above run the same check against this pull; a steady fetch reads as active-day share well above that 26.2% baseline and no gap anywhere near 27 days, with no month reading as a short tail-end burst in section 2.
+`company_news` caps results per call regardless of window width and fills most-recent-first, which is what a whole-month pull turns into a handful of tail-of-month bursts instead of a steady year -- first diagnosed on TSLA (`notebooks/modelling/3.0`, section 6) and the reason `pull_company_news` windows by day instead. There's no single active-day-share or gap-length number that applies across every ticker, since a genuinely low-news company (a control stock, say) will legitimately have fewer active days than a heavily-covered one, and that's real signal, not a bug. What to actually look for, in sections 1-2 above:
+
+- **A repeated, flat monthly count.** If several months show close to the same article count despite covering different numbers of active days, that's the truncation signature -- the call is hitting a ceiling, not describing real volume. This corpus's monthly counts run from 12 to 1,265; genuine variation across that range is the healthy sign, a tight repeated band is not.
+- **A long gap relative to the corpus span.** This pull's longest gap is 0 day(s) against a 335-day span. A gap that spans what should be active trading days, rather than a real quiet period for this specific company, is worth checking against the daily chart above.
+- **A low active-day share is not evidence on its own.** This pull sits at 100.0%; whether that's healthy depends on how newsy the company actually is, not on matching another ticker's number.
