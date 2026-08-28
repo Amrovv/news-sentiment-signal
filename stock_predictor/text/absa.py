@@ -30,6 +30,7 @@ from stock_predictor.config import (
     MAX_TOKENS,
 )
 from stock_predictor.text import entity_filter, sentiment
+from stock_predictor.text.device import inputs_to
 
 CACHE_COLUMNS = ["pair_hash", "pos", "neg", "neu"]
 
@@ -104,10 +105,13 @@ def _load_model_and_tokenizer():
     try:
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+        from stock_predictor.text.device import to_device
+
         logger.info(f"Loading ABSA model '{ABSA_MODEL}'")
         _TOKENIZER = AutoTokenizer.from_pretrained(ABSA_MODEL)
         _MODEL = AutoModelForSequenceClassification.from_pretrained(ABSA_MODEL)
         _MODEL.eval()
+        _MODEL = to_device(_MODEL, "ABSA")
         logger.info(f"ABSA model loaded; id2label={_MODEL.config.id2label}")
     except Exception as exc:  # noqa: BLE001 - any failure means "degrade"
         _LOAD_FAILED = True
@@ -212,7 +216,7 @@ def score_pairs(
                 max_length=MAX_TOKENS,
                 return_tensors="pt",
             )
-            logits = model(**inputs).logits
+            logits = model(**inputs_to(inputs, model)).logits
             probs = torch.softmax(logits, dim=-1)
 
             for h, row in zip(batch_hashes, probs.tolist()):

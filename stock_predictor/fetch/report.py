@@ -248,7 +248,14 @@ def main() -> None:
     in_path = args.path or (
         raw_articles_path(args.ticker) if args.dataset == "raw" else processed_articles_path(args.ticker)
     )
-    articles = pd.read_parquet(in_path)
+    # Only the timestamp is read: every number in this report is a function of
+    # publication time, and the corpus carries multi-GB body columns alongside
+    # it. Projecting here means parquet never touches those chunks.
+    try:
+        articles = pd.read_parquet(in_path, columns=["timestamp_utc"])
+    except (ValueError, KeyError) as exc:
+        logger.warning(f"Could not project [timestamp_utc] from {in_path} ({exc}); reading all")
+        articles = pd.read_parquet(in_path)
     logger.info(f"loaded {len(articles)} articles from {in_path}")
 
     out_path = write_fetch_report(articles, args.ticker, label=args.dataset)

@@ -31,6 +31,7 @@ import pandas as pd
 
 from stock_predictor.config import (
     COMPANIES,
+    COREF_JUDGE_CACHE_PATH,
     JUDGE_FLASH_ATTN,
     JUDGE_KV_CACHE_TYPE,
     JUDGE_MODEL_PATH,
@@ -306,6 +307,7 @@ def judge_corpus(
     prompt_version: str = PROMPT_VERSION,
     chunk: int = JUDGE_CHUNK,
     cache_path=None,
+    require_signal: bool = False,
 ) -> pd.DataFrame:
     """Judge every coref-resolved sentence in `sentences_df`, verdicts merged on.
 
@@ -322,6 +324,12 @@ def judge_corpus(
 
     `judge` is injectable so the loop can run without weights. `articles` supplies each
     context window's headline; both frames are passed in, keeping this a transform.
+
+    `require_signal` raises when every verdict came back `unsure`, which on a real
+    corpus means the backend never answered rather than that the corpus is
+    undecidable. Off by default so the per-row fail-closed contract stays testable
+    with an injected judge; `run_pipeline` turns it on, since that is where an
+    all-discarded corpus would otherwise become a deliverable.
     """
     from stock_predictor.text.coref_eval import (
         CACHE_COLUMNS,
@@ -427,8 +435,28 @@ def judge_corpus(
     out["judge_accepted"] = ~in_population | out["judge_answer"].map(accept_only).astype(bool)
 
     verdicts = out["judge_answer"].value_counts().to_dict()
+    n_verdicts = int(out["judge_answer"].notna().sum())
     logger.info(
-        f"judge_corpus: {int(out['judge_answer'].notna().sum())} rows carry a verdict "
+        f"judge_corpus: {n_verdicts} rows carry a verdict "
         f"({verdicts}); {int((~out['judge_accepted']).sum())} rows dropped by the gate"
     )
+
+    # Failing closed is right per row: one bad answer should cost that row, not
+    # the run. Across a whole corpus it is a different claim -- a real judge on a
+    # real corpus produces a mix, so all-`unsure` means the judge never actually
+    # ran (weights missing, or no memory left to load them), and every verdict
+    # cached above is an artefact of that rather than a measurement. Raise rather
+    # than return, because the alternative is a deliverable that looks complete,
+    # silently carries no coref-resolved sentence at all, and caches the failure
+    # for every later run to reuse.
+    if require_signal and n_verdicts and verdicts.get("unsure", 0) == n_verdicts:
+        raise RuntimeError(
+            f"judge_corpus: all {n_verdicts} verdicts are 'unsure' for {target}, which means "
+            "the judge backend never answered (missing weights, or no free memory to load "
+            "them) rather than that the corpus is genuinely undecidable. Refusing to build "
+            "features on it. Check the load warnings above, free GPU memory if the model "
+            f"could not be loaded, then delete this target's rows from the cache "
+            f"({COREF_JUDGE_CACHE_PATH.name}) and re-run."
+        )
+
     return out

@@ -273,8 +273,13 @@ SPACY_PIPE_BATCH_SIZE = 50
 # "biu-nlp/lingmess-coref" is the slower, more accurate drop-in swap.
 COREF_MODEL = "biu-nlp/f-coref"
 # Subword tokens per inference batch: fastcoref batches by token count, not by
-# document count.
+# document count. The CPU figure is bounded by system RAM and can be generous;
+# the GPU one cannot, because a coref model scores every candidate span pair and
+# so grows far faster than linearly in batch tokens. 10000 tokens on an 8GB card
+# shared with a desktop OOMs outright, hence a much smaller GPU batch rather
+# than the same number on both.
 COREF_BATCH_SIZE = 10000
+COREF_BATCH_SIZE_GPU = 1500
 # Default for entity_filter.process_articles(use_coref=...). Best-effort: a
 # missing backend logs one warning and every sentence is tagged from explicit
 # names alone. resolved_by_coref records which rows the model spoke for.
@@ -328,6 +333,14 @@ JUDGE_FLASH_ATTN = True
 # single-word yes/no/unsure classification. None leaves llama.cpp's default
 # (f16) in place -- the safe fallback if this ever needs disabling.
 JUDGE_KV_CACHE_TYPE = 8
+
+# --- Torch model placement ---------------------------------------------------
+# Device for the three torch models (FinBERT, ABSA, fastcoref); the GGUF judge
+# picks its own via JUDGE_N_GPU_LAYERS above. "auto" uses a CUDA device when
+# torch can see one and CPU otherwise; "cpu" or "cuda" pin it explicitly.
+# Resolved once per process by stock_predictor.text.device, which also falls
+# back to CPU per model if a move fails, so CPU-only stays a working setup.
+TEXT_DEVICE = "auto"
 
 # --- Sentiment scoring (Goal 3) ---
 FINBERT_MODEL = "ProsusAI/finbert"

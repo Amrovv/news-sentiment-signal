@@ -35,11 +35,35 @@ from loguru import logger
 import pandas as pd
 
 from stock_predictor.config import INTERIM_DATA_DIR, PROCESSED_DATA_DIR, processed_articles_path
-from stock_predictor.text import absa, coref_judge, entity_filter, fusion, sentiment
+from stock_predictor.text import absa, coref_judge, device, entity_filter, fusion, sentiment
 
 # Identity columns carried onto the final table. timestamp_utc is what the market
 # layer joins on; source is a categorical the model may use.
 IDENTITY_COLUMNS = ["article_id", "ticker", "timestamp_utc", "source"]
+
+# The only columns any phase reads. Projected at load time because the corpus
+# parquet also carries `raw_body` (the body before cleaning) alongside
+# `processed_body`, plus `summary` and `url`, none of which this pipeline
+# touches -- and article text does not stay compressed once it is in memory.
+# On a 16GB machine the difference is not academic: reading every column of the
+# 3.5GB AMZN corpus exhausts RAM and the process is killed during read_parquet,
+# before a single phase runs.
+CORPUS_COLUMNS = ["article_id", "headline", "timestamp_utc", "source", "processed_body"]
+
+
+def load_corpus(path) -> pd.DataFrame:
+    """Read one ticker's processed corpus, keeping only CORPUS_COLUMNS.
+
+    Falls back to a full read if the file predates a column in that list, so an
+    older corpus still loads rather than raising on a name it does not carry.
+    """
+    try:
+        return pd.read_parquet(path, columns=CORPUS_COLUMNS)
+    except (ValueError, KeyError) as exc:
+        logger.warning(
+            f"Could not project {CORPUS_COLUMNS} from {path} ({exc}); reading every column"
+        )
+        return pd.read_parquet(path)
 
 
 def write_feature_dictionary(final: pd.DataFrame, path) -> None:
@@ -146,8 +170,11 @@ def run(ticker: str) -> None:
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    articles = pd.read_parquet(processed_articles_path(ticker))
-    logger.info(f"[{ticker}] corpus: {len(articles)} articles")
+    articles = load_corpus(processed_articles_path(ticker))
+    logger.info(
+        f"[{ticker}] corpus: {len(articles)} articles "
+        f"({articles.memory_usage(deep=True).sum() / 1e9:.1f}GB in memory)"
+    )
 
     # --- Phase A: split, tag, coref, boilerplate ---------------------------
     if tagged_path.exists():
@@ -180,8 +207,14 @@ def run(ticker: str) -> None:
     headline_scores = sentiment.score_headlines(articles[["article_id", "headline"]])
 
     # --- Phase C: the judge over every coref sentence -----------------------
+    # The torch models are done with; hand their GPU memory back before the
+    # judge asks llama.cpp for several GB of its own. Without this they stay
+    # resident for the life of the process and the judge quietly fails closed,
+    # marking every row `unsure`.
+    device.release_gpu()
+
     scored["provenance_channel"] = fusion.provenance_channel(scored)
-    scored = coref_judge.judge_corpus(scored, articles, target=ticker)
+    scored = coref_judge.judge_corpus(scored, articles, target=ticker, require_signal=True)
 
     # --- Phase D: aggregate -------------------------------------------------
     scored.to_parquet(judged_path, index=False)

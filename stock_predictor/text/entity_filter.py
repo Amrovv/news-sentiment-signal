@@ -704,7 +704,13 @@ def process_articles(
             totals = {"clusters": 0, "resolved": 0, "ambiguous": 0, "unresolved": 0}
             n_docs_without_usable = 0
             n_misaligned = 0
-            for i, (clusters, sentences) in enumerate(zip(all_clusters, all_sentences)):
+            for i, (clusters, sentences) in enumerate(
+                tqdm(
+                    zip(all_clusters, all_sentences),
+                    total=len(all_clusters),
+                    desc="Mapping coref clusters",
+                )
+            ):
                 # Explicit alignment check: the Doc the Spans came from must be
                 # character-identical to the string coref was given, otherwise
                 # every offset below points at the wrong characters.

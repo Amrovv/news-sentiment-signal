@@ -58,11 +58,20 @@ requires-python = "~=3.12.0"
 
 [tool.uv.sources]
 llama-cpp-python = { index = "llama-cpp-python-cuda" }
+# PyPI's default torch wheel on Windows is the CPU-only build, which leaves
+# torch.cuda.is_available() False and pins FinBERT, ABSA and fastcoref to the
+# CPU however they are configured. Same version (2.13.0), CUDA-enabled build.
+torch = { index = "pytorch-cu126" }
 en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [[tool.uv.index]]
 name = "llama-cpp-python-cuda"
 url = "https://abetlen.github.io/llama-cpp-python/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.pytest.ini_options]

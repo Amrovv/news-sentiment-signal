@@ -26,12 +26,22 @@ import logging
 from loguru import logger
 import pandas as pd
 
-from stock_predictor.config import COREF_BATCH_SIZE, COREF_CACHE_PATH, COREF_MODEL
+from stock_predictor.config import (
+    COREF_BATCH_SIZE,
+    COREF_BATCH_SIZE_GPU,
+    COREF_CACHE_PATH,
+    COREF_MODEL,
+)
 from stock_predictor.text.sentiment import hash_text
 
 # Loaded once per process. _LOAD_FAILED latches so a broken backend warns once.
 _MODEL = None
 _LOAD_FAILED = False
+# The device the model actually loaded onto, which is not necessarily the one
+# asked for: _load_model() falls back to the CPU. Read by resolve_documents()
+# to size its batches, so a fallback gets CPU-sized batches rather than the
+# small GPU ones.
+_DEVICE: str | None = None
 
 # Cluster spans are (char_start, char_end) into the document text.
 Span = tuple[int, int]
@@ -43,33 +53,60 @@ CACHE_COLUMNS = ["text_hash", "clusters_json"]
 def _load_model():
     """Load (once, then memoise) the fastcoref model. Returns None on failure.
 
+    Tries the GPU first when one is available, falling back to CPU; see the
+    comment on the loop below for why the fallback matters here specifically.
+
     Wrapped rather than imported bare for two compatibility reasons: fastcoref 2.1.x
     predates transformers 5.x and its FCorefModel lacks `all_tied_weights_keys`,
     which from_pretrained() reads unconditionally, so the shim below supplies the
     empty mapping; and fastcoref logs at INFO through stdlib logging, which would
     swamp loguru output.
     """
-    global _MODEL, _LOAD_FAILED
+    global _MODEL, _LOAD_FAILED, _DEVICE
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
-    try:
-        logging.getLogger("fastcoref").setLevel(logging.WARNING)
-        from fastcoref import FCoref
-        from fastcoref.modeling import FCorefModel
 
-        if not hasattr(FCorefModel, "all_tied_weights_keys"):
-            FCorefModel.all_tied_weights_keys = {}
+    logging.getLogger("fastcoref").setLevel(logging.WARNING)
 
-        logger.info(f"Loading coreference model '{COREF_MODEL}' (CPU)")
-        _MODEL = FCoref(model_name_or_path=COREF_MODEL, device="cpu", enable_progress_bar=False)
-        logger.info("Coreference model loaded")
-    except Exception as exc:  # noqa: BLE001 - any failure means "fall back"
-        _LOAD_FAILED = True
-        logger.warning(
-            f"Coreference backend unavailable ({type(exc).__name__}: {exc}); "
-            "tagging will use explicit company names only"
-        )
-        _MODEL = None
+    # GPU first, CPU second. Inference here is the pipeline's other long silent
+    # stage (FCoref.predict runs a transformer per document with no progress of
+    # its own), so the device matters; a GPU-specific failure must still leave a
+    # working CPU run rather than turning coref off altogether, which would
+    # silently drop every coref-resolved sentence from the corpus.
+    from stock_predictor.text.device import resolve_device
+
+    devices = ["cpu"] if resolve_device() == "cpu" else [resolve_device(), "cpu"]
+    for i, device in enumerate(devices):
+        try:
+            from fastcoref import FCoref
+            from fastcoref.modeling import FCorefModel
+
+            # fastcoref 2.1.x predates transformers 5.x and its FCorefModel lacks
+            # `all_tied_weights_keys`, which from_pretrained() reads
+            # unconditionally, so supply the empty mapping.
+            if not hasattr(FCorefModel, "all_tied_weights_keys"):
+                FCorefModel.all_tied_weights_keys = {}
+
+            logger.info(f"Loading coreference model '{COREF_MODEL}' ({device})")
+            _MODEL = FCoref(
+                model_name_or_path=COREF_MODEL, device=device, enable_progress_bar=False
+            )
+            _DEVICE = device
+            logger.info(f"Coreference model loaded ({device})")
+            return _MODEL
+        except Exception as exc:  # noqa: BLE001 - any failure means "fall back"
+            if i < len(devices) - 1:
+                logger.warning(
+                    f"Coreference model failed to load on {device} "
+                    f"({type(exc).__name__}: {exc}); falling back to CPU"
+                )
+                continue
+            _LOAD_FAILED = True
+            logger.warning(
+                f"Coreference backend unavailable ({type(exc).__name__}: {exc}); "
+                "tagging will use explicit company names only"
+            )
+            _MODEL = None
     return _MODEL
 
 
@@ -137,7 +174,7 @@ def save_cache(cache_df: pd.DataFrame, path=COREF_CACHE_PATH) -> None:
 
 def resolve_documents(
     texts: list[str],
-    batch_size: int = COREF_BATCH_SIZE,
+    batch_size: int | None = None,
     cache_path=COREF_CACHE_PATH,
     use_cache: bool = True,
 ) -> list[list[Cluster]]:
@@ -151,7 +188,9 @@ def resolve_documents(
     a cold run.
 
     Batching uses fastcoref's predict(), which packs documents up to `batch_size`
-    subword tokens per pass.
+    subword tokens per pass. Left as None it follows the device the model actually
+    loaded onto -- COREF_BATCH_SIZE_GPU on a GPU, COREF_BATCH_SIZE on the CPU --
+    since the batch a GPU can hold is far smaller than the one system RAM can.
 
     Never raises: on backend failure every document gets an empty cluster list.
     """
@@ -200,8 +239,14 @@ def resolve_documents(
     run_hashes = list(to_run)
     payload = [to_run[h] for h in run_hashes]
 
+    # Sized after the load, not before, so a GPU that fell back to the CPU gets
+    # CPU-sized batches rather than needlessly small ones.
+    if batch_size is None:
+        batch_size = COREF_BATCH_SIZE_GPU if _DEVICE == "cuda" else COREF_BATCH_SIZE
+
     logger.info(
-        f"Resolving coreference over {len(payload)} documents (max {batch_size} tokens per batch)"
+        f"Resolving coreference over {len(payload)} documents "
+        f"(max {batch_size} tokens per batch, {_DEVICE or 'cpu'})"
     )
     try:
         preds = model.predict(texts=payload, max_tokens_in_batch=batch_size)
