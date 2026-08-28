@@ -119,6 +119,83 @@ NEWS_START_DATE = "2025-08-01"
 NEWS_END_DATE = "2026-08-01"
 MIN_USABLE_ARTICLES = 1500  # below -> fallback dataset
 
+# --- Article fetch (Goal 1) --------------------------------------------------
+# Raw Finnhub pull, before the scrape stage resolves source/time/body. This
+# single-file constant is what the existing TSLA-only run_pipeline.py reads;
+# raw_articles_path()/processed_articles_path() below are the per-ticker forms
+# the fetch package's own CLIs (finnhub_pull.py, scrape.py) read and write.
+RAW_ARTICLES_PATH = RAW_DATA_DIR / "raw_articles.parquet"
+
+
+def raw_articles_path(ticker: str) -> Path:
+    """Where finnhub_pull.py's CLI writes one ticker's raw pull."""
+    return RAW_DATA_DIR / f"{ticker}_raw_articles.parquet"
+
+
+def processed_articles_path(ticker: str) -> Path:
+    """Where scrape.py's CLI writes one ticker's scraped, cleaned corpus."""
+    return INTERIM_DATA_DIR / f"{ticker}_processed_articles.parquet"
+
+
+def processed_chunk_dir(ticker: str) -> Path:
+    """Where scrape.py's chunked run checkpoints each chunk's result."""
+    return INTERIM_DATA_DIR / f"{ticker}_processed_chunks"
+
+# `company_news` caps results per call regardless of window width and fills
+# most-recent-first (notebooks/modelling/3.0, section 6, diagnosed this as the
+# cause of the original pull's tail-of-month bursts). This is a conservative
+# early-warning line, not a confirmed cap value: pull_company_news logs a
+# warning if any single call's count reaches it, since that call may be
+# getting silently truncated the same way. The fetch report is what actually
+# confirms whether a given pull is steady, this is just a tripwire during it.
+FETCH_CAP_WARN_COUNT = 100
+
+# finnhub-python's client has no retry/backoff of its own (a bare
+# requests.Session, no HTTPAdapter/Retry mounted), and a daily-windowed pull
+# is ~365 calls where the old monthly one was ~13 -- one transient timeout
+# used to be rare enough to ignore, now it's close to guaranteed over a full
+# year. pull_company_news retries a failing window this many times, waiting
+# FETCH_RETRY_BACKOFF_SECONDS between attempts, before logging it as failed
+# and moving on rather than losing the whole run.
+FETCH_RETRY_ATTEMPTS = 3
+FETCH_RETRY_BACKOFF_SECONDS = 5
+
+# Sources found readable by the probe in notebooks/text/1.1-aw-scraper-probe.ipynb:
+# most requests reach a 200 and the body is long enough to be a real article.
+# SeekingAlpha, ChartMill, MarketWatch (blocked outright) and CNBC, Finnhub
+# (reach but no real body) are excluded.
+OPEN_SOURCES = ["Yahoo", "Benzinga", "DowJones"]
+
+SCRAPE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    )
+}
+SCRAPE_MAX_WORKERS = 8
+SCRAPE_TIMEOUT = 12  # seconds
+MIN_BODY_CHARS = 500  # cleaned body shorter than this is a stub, cookie wall, or paywall teaser
+MAX_SHIFT_HOURS = 6  # a scraped time this far from the Finnhub API time is treated as a repost, not a correction
+
+# A cross-host canonical is normally trusted outright (it's the original
+# outlet's own page), but that has no floor against a genuinely old,
+# re-referenced story surfacing in Finnhub's feed years after it first ran --
+# found in practice: a 2023 CNN article scored into a 2025-2026 pull. Cap how
+# far a cross-host date may diverge from the Finnhub API time before it's
+# rejected back to the API time instead of trusted.
+MAX_CROSS_HOST_SHIFT_DAYS = 30
+REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
+
+# A full corpus can be tens of thousands of articles, and at REQ_PER_SEC that
+# is well over an hour of continuous network I/O -- a long enough window that
+# a killed process, a lost connection, or a machine restart partway through
+# is a real risk, not a hypothetical one. scrape.py's CLI runs in chunks of
+# this size, checkpointing each chunk's result to processed_chunk_dir()
+# before starting the next, so an interruption costs at most one chunk's
+# worth of work rather than the whole run, and a restart skips any chunk
+# whose checkpoint already exists.
+SCRAPE_CHUNK_SIZE = 500
+
 LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
 
 # --- Entity filter (Goal 2) ---
@@ -143,8 +220,9 @@ COREF_CACHE_PATH = INTERIM_DATA_DIR / "coref_cache.parquet"
 
 # --- Pipeline input ---------------------------------------------------------
 # The cleaned article table the pipeline consumes, one row per article with
-# processed_body. Written by notebook 1.2, ~530MB, kept out of git. Under
-# data/interim/ because it is a large regenerable intermediate, not a deliverable.
+# processed_body. Written by stock_predictor.fetch.scrape, ~530MB, kept out
+# of git. Under data/interim/ because it is a large regenerable intermediate,
+# not a deliverable.
 PROCESSED_ARTICLES_PATH = INTERIM_DATA_DIR / "processed_articles.parquet"
 
 # --- Referent verification --------------------------------------------------
