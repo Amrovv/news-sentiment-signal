@@ -35,6 +35,7 @@ from stock_predictor.config import (
     SENTIMENT_CACHE_PATH,
 )
 from stock_predictor.text import entity_filter, fusion
+from stock_predictor.text.device import inputs_to
 
 CACHE_COLUMNS = ["text_hash", "pos", "neg", "neu"]
 
@@ -125,11 +126,13 @@ def save_cache(cache_df: pd.DataFrame, path=SENTIMENT_CACHE_PATH) -> None:
 def _load_model_and_tokenizer():
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+    from stock_predictor.text.device import to_device
+
     logger.info(f"Loading FinBERT model '{FINBERT_MODEL}'")
     tokenizer = AutoTokenizer.from_pretrained(FINBERT_MODEL)
     model = AutoModelForSequenceClassification.from_pretrained(FINBERT_MODEL)
     model.eval()
-    return model, tokenizer
+    return to_device(model, "FinBERT"), tokenizer
 
 
 def _build_label_index_map(model) -> dict[str, int]:
@@ -227,7 +230,7 @@ def score_sentences(
                 max_length=MAX_TOKENS,
                 return_tensors="pt",
             )
-            logits = model(**inputs).logits
+            logits = model(**inputs_to(inputs, model)).logits
             probs = torch.softmax(logits, dim=-1)
 
             for h, row in zip(batch_hashes, probs.tolist()):

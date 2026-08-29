@@ -75,9 +75,28 @@ COMPANIES = {
         ],
     },
     "NVDA": {
-        "names": ["Nvidia", "NVDA", "Nvidia Corp", "$NVDA"],
-        "person": ["Jensen Huang", "Huang"],
-        "products": ["Blackwell", "Hopper", "CUDA", "GeForce"],
+        "names": ["Nvidia", "NVDA", "Nvidia Corp", "Nvidia Corporation", "$NVDA"],
+        "person": ["Jensen Huang", "Huang", "Jensen"],
+        "products": [
+            "Blackwell",
+            "Hopper",
+            "Ada Lovelace",
+            "Ampere",
+            "GeForce",
+            "RTX",
+            "GTX",
+            "CUDA",
+            "Omniverse",
+            "DGX",
+            "Grace",
+            "NVLink",
+            "Tensor Core",
+            "DLSS",
+            "Jetson",
+            "Quadro",
+            "Shield TV",
+            "Drive",
+        ],
     },
     "KO": {
         "names": ["Coca-Cola", "Coca Cola", "Coke", "KO", "$KO"],
@@ -97,8 +116,54 @@ COMPANIES = {
     "TM": {"names": ["Toyota"]},
     "VOW": {"names": ["Volkswagen", "VW"]},
     "NIO": {"names": ["NIO"]},
-    "AAPL": {"names": ["Apple"]},
-    "AMZN": {"names": ["Amazon"]},
+    "AAPL": {
+        "names": ["Apple", "AAPL", "Apple Inc", "Apple Inc.", "$AAPL"],
+        # "Cook" and "Jobs" alone are excluded: common words ("to cook", "jobs" the
+        # noun), unlike "Musk"/"Huang" -- would false-positive constantly. Full
+        # names only.
+        "person": ["Tim Cook", "Steve Jobs"],
+        "products": [
+            "iPhone",
+            "iPad",
+            "Mac",
+            "MacBook",
+            "MacBook Air",
+            "MacBook Pro",
+            "iMac",
+            "Apple Watch",
+            "AirPods",
+            "Vision Pro",
+            "iOS",
+            "macOS",
+            "iPadOS",
+            "App Store",
+            "Siri",
+            "Apple Intelligence",
+            "Apple TV",
+            "HomePod",
+        ],
+    },
+    "AMZN": {
+        "names": ["Amazon", "AMZN", "Amazon.com", "Amazon Inc", "Amazon Inc.", "$AMZN"],
+        "person": ["Andy Jassy", "Jassy", "Jeff Bezos", "Bezos"],
+        "products": [
+            "AWS",
+            "Amazon Web Services",
+            "Prime",
+            "Amazon Prime",
+            "Prime Video",
+            "Alexa",
+            "Kindle",
+            "Echo",
+            "Fire TV",
+            "Whole Foods",
+            "Amazon Music",
+            "Ring",
+            "Amazon Go",
+            "Kuiper",
+            "Bedrock",
+        ],
+    },
     "SpaceX": {"names": ["SpaceX"]},
     "X Corp": {"names": ["X Corp", "X.com"]},
     "UBER": {"names": ["Uber"]},
@@ -201,15 +266,46 @@ LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
 # --- Entity filter (Goal 2) ---
 MIN_SENT_CHARS = 20  # below this, sentences are scraper residue ("Advertisement", "Read more")
 SPACY_MODEL = "en_core_web_sm"
-SPACY_PIPE_BATCH_SIZE = 50
+SPACY_PIPE_BATCH_SIZE = 200
+
+# Pipeline components loaded but never read. entity_filter needs the parser
+# (doc.sents, token.dep_, token.head) and the NER (doc.ents); nothing anywhere
+# reads pos_, tag_, morph or lemma_, which is all the tagger, attribute_ruler
+# and lemmatizer produce. Both the parser and the NER listen to tok2vec rather
+# than to the tagger, so dropping these does not change what they predict.
+# DO NOT add "ner" or "parser" here -- see the warning on _get_nlp().
+SPACY_EXCLUDE = ["lemmatizer", "tagger", "attribute_ruler"]
+
+# Worker processes for the sentence-splitting parse, the pipeline's largest
+# CPU-bound cost (~11.5 min for 12k articles single-process). Workers spawn on
+# Windows, so the caller must sit under an `if __name__ == "__main__"` guard --
+# run_pipeline does. Each worker holds its own copy of the model and the Docs in
+# flight, so this buys wall time with memory; 4 of 6 cores leaves room for both.
+SPACY_N_PROCESS = 4
+
+# Below this many documents the spawn cost outweighs the parallelism, so short
+# batches (tests, notebooks, a handful of articles) keep the single-process path.
+SPACY_MULTIPROCESS_MIN_DOCS = 500
 
 # --- Coreference resolution -------------------------------------------------
 # A HuggingFace id consumed by fastcoref. F-Coref is ~90M params and CPU-viable;
 # "biu-nlp/lingmess-coref" is the slower, more accurate drop-in swap.
 COREF_MODEL = "biu-nlp/f-coref"
 # Subword tokens per inference batch: fastcoref batches by token count, not by
-# document count.
+# document count. The CPU figure is bounded by system RAM and can be generous;
+# the GPU one cannot, because a coref model scores every candidate span pair and
+# so grows far faster than linearly in batch tokens. 10000 tokens on an 8GB card
+# shared with a desktop OOMs outright, hence a much smaller GPU batch rather
+# than the same number on both.
 COREF_BATCH_SIZE = 10000
+COREF_BATCH_SIZE_GPU = 1500
+
+# Documents per predict() call. fastcoref holds every prediction it has made
+# until the call returns, and on a GPU those carry device tensors, so one call
+# over a whole corpus grows until the card is full regardless of how small
+# max_tokens_in_batch is. Chunking bounds that, and gives the cache something to
+# save partway through a long resolve rather than only at the end.
+COREF_DOC_CHUNK = 500
 # Default for entity_filter.process_articles(use_coref=...). Best-effort: a
 # missing backend logs one warning and every sentence is tagged from explicit
 # names alone. resolved_by_coref records which rows the model spoke for.
@@ -243,6 +339,34 @@ EVAL_CONTEXT_FOLLOWING = 1
 # transformers so it cannot pull a different torch build in underneath FinBERT,
 # ABSA and fastcoref. Not tracked; models/ is gitignored.
 JUDGE_MODEL_PATH = MODELS_DIR / "gguf" / "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+
+# GPU layers to offload for the judge model, when a CUDA-capable llama-cpp-python
+# build is installed: -1 offloads every layer (fastest, tried first), 0 forces
+# CPU-only (the original, always-viable path this project was built around).
+# CPU-viable was a real constraint, not a preference -- keep 0 working.
+JUDGE_N_GPU_LAYERS = -1
+
+# Batch sizes and flash attention for the GPU path. Measured on an RTX 2070
+# Super, real judge prompts via the actual pipeline on the true unmodified
+# CPU-only build: 5.5s/row (CPU) to 0.20-0.22s/row at these settings, ~27x.
+# Both are ignored (harmlessly) when running CPU-only.
+JUDGE_N_BATCH = 1024
+JUDGE_N_UBATCH = 1024
+JUDGE_FLASH_ATTN = True
+
+# Quantized KV cache type for the GPU path (ggml type id: 8 = q8_0). Cuts KV
+# cache memory-bandwidth cost a bit further; negligible accuracy risk for a
+# single-word yes/no/unsure classification. None leaves llama.cpp's default
+# (f16) in place -- the safe fallback if this ever needs disabling.
+JUDGE_KV_CACHE_TYPE = 8
+
+# --- Torch model placement ---------------------------------------------------
+# Device for the three torch models (FinBERT, ABSA, fastcoref); the GGUF judge
+# picks its own via JUDGE_N_GPU_LAYERS above. "auto" uses a CUDA device when
+# torch can see one and CPU otherwise; "cpu" or "cuda" pin it explicitly.
+# Resolved once per process by stock_predictor.text.device, which also falls
+# back to CPU per model if a move fails, so CPU-only stays a working setup.
+TEXT_DEVICE = "auto"
 
 # --- Sentiment scoring (Goal 3) ---
 FINBERT_MODEL = "ProsusAI/finbert"

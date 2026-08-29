@@ -205,6 +205,11 @@ project_overview.md
 # keep these so an older tree or a re-run cannot commit one by accident.
 data/processed/processed_articles*.parquet
 
+# Raw article pulls -- regenerable from stock_predictor.fetch.finnhub_pull,
+# heavy, and disk-only by design (see reports/*_raw_fetch_report.md for what
+# a pull produced instead).
+data/raw/*_raw_articles.parquet
+
 # Secrets -- never commit. config.py reads FINNHUB_API_KEY from here via python-dotenv.
 .env
 .env.*

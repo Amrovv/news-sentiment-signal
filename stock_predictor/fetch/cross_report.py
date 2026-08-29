@@ -32,9 +32,20 @@ from stock_predictor.fetch.report import _md_table, burst_check
 DEFAULT_TICKERS = ["TSLA", "AAPL", "AMZN", "NVDA"]
 
 
-def _load(ticker: str, dataset: str) -> pd.DataFrame:
+def _load(ticker: str, dataset: str, timestamp_col: str = "timestamp_utc") -> pd.DataFrame:
+    """Read one ticker's corpus, keeping only the timestamp column.
+
+    Everything this module computes is a function of publication time, while the
+    corpus itself carries the article bodies -- several GB per ticker, and this
+    reads four of them twice over. Projecting at read time keeps parquet from
+    touching those column chunks at all, rather than loading them to drop them.
+    """
     path = raw_articles_path(ticker) if dataset == "raw" else processed_articles_path(ticker)
-    return pd.read_parquet(path)
+    try:
+        return pd.read_parquet(path, columns=[timestamp_col])
+    except (ValueError, KeyError) as exc:
+        logger.warning(f"Could not project [{timestamp_col}] from {path} ({exc}); reading all")
+        return pd.read_parquet(path)
 
 
 def _plot_monthly_comparison(per_ticker_month: dict[str, pd.DataFrame], dataset: str) -> Path:

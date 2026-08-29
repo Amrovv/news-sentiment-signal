@@ -22,16 +22,28 @@ into one column. Saves MERGE with the cache loaded at call start.
 
 import json
 import logging
+import time
 
 from loguru import logger
 import pandas as pd
 
-from stock_predictor.config import COREF_BATCH_SIZE, COREF_CACHE_PATH, COREF_MODEL
+from stock_predictor.config import (
+    COREF_BATCH_SIZE,
+    COREF_BATCH_SIZE_GPU,
+    COREF_CACHE_PATH,
+    COREF_DOC_CHUNK,
+    COREF_MODEL,
+)
 from stock_predictor.text.sentiment import hash_text
 
 # Loaded once per process. _LOAD_FAILED latches so a broken backend warns once.
 _MODEL = None
 _LOAD_FAILED = False
+# The device the model actually loaded onto, which is not necessarily the one
+# asked for: _load_model() falls back to the CPU. Read by resolve_documents()
+# to size its batches, so a fallback gets CPU-sized batches rather than the
+# small GPU ones.
+_DEVICE: str | None = None
 
 # Cluster spans are (char_start, char_end) into the document text.
 Span = tuple[int, int]
@@ -43,33 +55,60 @@ CACHE_COLUMNS = ["text_hash", "clusters_json"]
 def _load_model():
     """Load (once, then memoise) the fastcoref model. Returns None on failure.
 
+    Tries the GPU first when one is available, falling back to CPU; see the
+    comment on the loop below for why the fallback matters here specifically.
+
     Wrapped rather than imported bare for two compatibility reasons: fastcoref 2.1.x
     predates transformers 5.x and its FCorefModel lacks `all_tied_weights_keys`,
     which from_pretrained() reads unconditionally, so the shim below supplies the
     empty mapping; and fastcoref logs at INFO through stdlib logging, which would
     swamp loguru output.
     """
-    global _MODEL, _LOAD_FAILED
+    global _MODEL, _LOAD_FAILED, _DEVICE
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
-    try:
-        logging.getLogger("fastcoref").setLevel(logging.WARNING)
-        from fastcoref import FCoref
-        from fastcoref.modeling import FCorefModel
 
-        if not hasattr(FCorefModel, "all_tied_weights_keys"):
-            FCorefModel.all_tied_weights_keys = {}
+    logging.getLogger("fastcoref").setLevel(logging.WARNING)
 
-        logger.info(f"Loading coreference model '{COREF_MODEL}' (CPU)")
-        _MODEL = FCoref(model_name_or_path=COREF_MODEL, device="cpu", enable_progress_bar=False)
-        logger.info("Coreference model loaded")
-    except Exception as exc:  # noqa: BLE001 - any failure means "fall back"
-        _LOAD_FAILED = True
-        logger.warning(
-            f"Coreference backend unavailable ({type(exc).__name__}: {exc}); "
-            "tagging will use explicit company names only"
-        )
-        _MODEL = None
+    # GPU first, CPU second. Inference here is the pipeline's other long silent
+    # stage (FCoref.predict runs a transformer per document with no progress of
+    # its own), so the device matters; a GPU-specific failure must still leave a
+    # working CPU run rather than turning coref off altogether, which would
+    # silently drop every coref-resolved sentence from the corpus.
+    from stock_predictor.text.device import resolve_device
+
+    devices = ["cpu"] if resolve_device() == "cpu" else [resolve_device(), "cpu"]
+    for i, device in enumerate(devices):
+        try:
+            from fastcoref import FCoref
+            from fastcoref.modeling import FCorefModel
+
+            # fastcoref 2.1.x predates transformers 5.x and its FCorefModel lacks
+            # `all_tied_weights_keys`, which from_pretrained() reads
+            # unconditionally, so supply the empty mapping.
+            if not hasattr(FCorefModel, "all_tied_weights_keys"):
+                FCorefModel.all_tied_weights_keys = {}
+
+            logger.info(f"Loading coreference model '{COREF_MODEL}' ({device})")
+            _MODEL = FCoref(
+                model_name_or_path=COREF_MODEL, device=device, enable_progress_bar=False
+            )
+            _DEVICE = device
+            logger.info(f"Coreference model loaded ({device})")
+            return _MODEL
+        except Exception as exc:  # noqa: BLE001 - any failure means "fall back"
+            if i < len(devices) - 1:
+                logger.warning(
+                    f"Coreference model failed to load on {device} "
+                    f"({type(exc).__name__}: {exc}); falling back to CPU"
+                )
+                continue
+            _LOAD_FAILED = True
+            logger.warning(
+                f"Coreference backend unavailable ({type(exc).__name__}: {exc}); "
+                "tagging will use explicit company names only"
+            )
+            _MODEL = None
     return _MODEL
 
 
@@ -135,11 +174,53 @@ def save_cache(cache_df: pd.DataFrame, path=COREF_CACHE_PATH) -> None:
     logger.info(f"Saved coreference cache with {len(deduped)} entries to {path}")
 
 
+def _extract_clusters(pred) -> list[Cluster]:
+    """Pull (start, end) spans out of one fastcoref prediction, skipping anything
+    malformed.
+
+    A prediction that came back from a degraded inference pass can carry None in
+    place of a span, which unpacking blindly turns into a TypeError thousands of
+    documents into a resolve. A document whose spans cannot be read is worth
+    dropping to explicit-name tagging; it is not worth losing the corpus over.
+    """
+    clusters: list[Cluster] = []
+    try:
+        raw_clusters = pred.get_clusters(as_strings=False)
+    except Exception as exc:  # noqa: BLE001 - a bad prediction degrades to no clusters
+        logger.warning(f"Unreadable coreference prediction ({type(exc).__name__}: {exc})")
+        return clusters
+
+    for cluster in raw_clusters or []:
+        spans: Cluster = []
+        for span in cluster or []:
+            try:
+                start, end = span
+                spans.append((int(start), int(end)))
+            except (TypeError, ValueError):
+                continue
+        if spans:
+            clusters.append(spans)
+    return clusters
+
+
+def _free_device_memory() -> None:
+    """Return anything the last inference call left on the GPU. No-op on CPU."""
+    if _DEVICE != "cuda":
+        return
+    try:
+        import torch
+
+        torch.cuda.empty_cache()
+    except Exception as exc:  # noqa: BLE001 - freeing memory must never fail a run
+        logger.warning(f"Could not empty the CUDA cache ({type(exc).__name__}: {exc})")
+
+
 def resolve_documents(
     texts: list[str],
-    batch_size: int = COREF_BATCH_SIZE,
+    batch_size: int | None = None,
     cache_path=COREF_CACHE_PATH,
     use_cache: bool = True,
+    doc_chunk: int = COREF_DOC_CHUNK,
 ) -> list[list[Cluster]]:
     """Resolve coreference over a batch of documents, with an on-disk cache.
 
@@ -151,7 +232,9 @@ def resolve_documents(
     a cold run.
 
     Batching uses fastcoref's predict(), which packs documents up to `batch_size`
-    subword tokens per pass.
+    subword tokens per pass. Left as None it follows the device the model actually
+    loaded onto -- COREF_BATCH_SIZE_GPU on a GPU, COREF_BATCH_SIZE on the CPU --
+    since the batch a GPU can hold is far smaller than the one system RAM can.
 
     Never raises: on backend failure every document gets an empty cluster list.
     """
@@ -200,27 +283,66 @@ def resolve_documents(
     run_hashes = list(to_run)
     payload = [to_run[h] for h in run_hashes]
 
+    # Sized after the load, not before, so a GPU that fell back to the CPU gets
+    # CPU-sized batches rather than needlessly small ones.
+    if batch_size is None:
+        batch_size = COREF_BATCH_SIZE_GPU if _DEVICE == "cuda" else COREF_BATCH_SIZE
+
     logger.info(
-        f"Resolving coreference over {len(payload)} documents (max {batch_size} tokens per batch)"
+        f"Resolving coreference over {len(payload)} documents "
+        f"(max {batch_size} tokens per batch, {doc_chunk} docs per call, {_DEVICE or 'cpu'})"
     )
-    try:
-        preds = model.predict(texts=payload, max_tokens_in_batch=batch_size)
-    except Exception as exc:  # noqa: BLE001 - inference failure must degrade
-        logger.warning(
-            f"Coreference inference failed ({type(exc).__name__}: {exc}); "
-            "tagging will use explicit company names only"
-        )
-        return out
 
     resolved: dict[str, list[Cluster]] = {}
     n_clusters = 0
-    for h, pred in zip(run_hashes, preds):
-        clusters = [
-            [(int(s), int(e)) for s, e in cluster]
-            for cluster in pred.get_clusters(as_strings=False)
-        ]
-        resolved[h] = clusters
-        n_clusters += len(clusters)
+    start = time.time()
+
+    for offset in range(0, len(payload), doc_chunk):
+        chunk_hashes = run_hashes[offset : offset + doc_chunk]
+        chunk_texts = payload[offset : offset + doc_chunk]
+
+        try:
+            preds = model.predict(texts=chunk_texts, max_tokens_in_batch=batch_size)
+        except Exception as exc:  # noqa: BLE001 - one chunk failing must not lose the rest
+            logger.warning(
+                f"Coreference inference failed on documents "
+                f"{offset}-{offset + len(chunk_texts)} ({type(exc).__name__}: {exc}); "
+                "those are tagged on explicit names only"
+            )
+            preds = []
+
+        for h, pred in zip(chunk_hashes, preds):
+            clusters = _extract_clusters(pred)
+            resolved[h] = clusters
+            n_clusters += len(clusters)
+
+        # Drop the predictions before the next call rather than after the loop:
+        # holding them is what fills the card in the first place.
+        del preds
+        _free_device_memory()
+
+        done = min(offset + doc_chunk, len(payload))
+        rate = (time.time() - start) / done
+        logger.info(
+            f"Coreference: {done}/{len(payload)} ({done / len(payload):.1%}) "
+            f"{rate:.2f}s/doc ~{(len(payload) - done) * rate / 60:.1f}m left"
+        )
+
+        # Saved per chunk, so an interrupt or a failure later in the corpus keeps
+        # what is already resolved. cache_df carries the accumulated union, and
+        # save_cache dedupes on text_hash keeping the last.
+        if use_cache and resolved:
+            new_rows = pd.DataFrame(
+                [
+                    {"text_hash": rh, "clusters_json": _serialize_clusters(resolved[rh])}
+                    for rh in chunk_hashes
+                    if rh in resolved
+                ],
+                columns=CACHE_COLUMNS,
+            )
+            if len(new_rows):
+                cache_df = pd.concat([cache_df, new_rows], ignore_index=True)
+                save_cache(cache_df, path=cache_path)
 
     for i in keep_idx:
         h = hashes[i]
@@ -228,17 +350,5 @@ def resolve_documents(
             out[i] = resolved[h]
 
     logger.info(f"Coreference produced {n_clusters} clusters across {len(payload)} documents")
-
-    if use_cache and resolved:
-        new_rows = pd.DataFrame(
-            [
-                {"text_hash": h, "clusters_json": _serialize_clusters(c)}
-                for h, c in resolved.items()
-            ],
-            columns=CACHE_COLUMNS,
-        )
-        # Merge, never replace: `resolved` covers only this call's misses, so
-        # saving it alone would drop every previously cached document.
-        save_cache(pd.concat([cache_df, new_rows], ignore_index=True), path=cache_path)
 
     return out

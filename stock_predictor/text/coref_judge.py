@@ -21,13 +21,25 @@ uniform across tickers and nothing here detects when it has decayed.
     judge_corpus()   the batch entry point: chunked, resumable, merged back on
 """
 
+import os
 from pathlib import Path
+import sys
 import time
 
 from loguru import logger
 import pandas as pd
 
-from stock_predictor.config import COMPANIES, JUDGE_MODEL_PATH, PRIMARY_TICKER
+from stock_predictor.config import (
+    COMPANIES,
+    COREF_JUDGE_CACHE_PATH,
+    JUDGE_FLASH_ATTN,
+    JUDGE_KV_CACHE_TYPE,
+    JUDGE_MODEL_PATH,
+    JUDGE_N_BATCH,
+    JUDGE_N_GPU_LAYERS,
+    JUDGE_N_UBATCH,
+    PRIMARY_TICKER,
+)
 
 # Bump on ANY change to the string the model sees: it is part of the cache key.
 PROMPT_VERSION = "v3"
@@ -113,37 +125,95 @@ def build_prompt(ctx, target: str = PRIMARY_TICKER) -> str:
     )
 
 
-def _load_model(model_path=None, n_ctx: int = DEFAULT_N_CTX, n_threads: int | None = None):
+def _prepend_cuda_dlls_to_path() -> None:
+    """On Windows, add the pip-installed NVIDIA CUDA runtime DLL directories to
+    PATH before llama_cpp is imported, so a CUDA-enabled build can find
+    cudart/cublas at load time.
+
+    llama_cpp's own loader passes winmode=ctypes.RTLD_GLOBAL to ctypes.CDLL,
+    which -- a documented Windows/ctypes quirk -- silently ignores directories
+    registered via os.add_dll_directory. PATH is honored regardless of that
+    flag, so it is the one mechanism that reliably works for this loader. A
+    no-op if the nvidia pip packages are not installed (e.g. a CPU-only
+    environment) or on a non-Windows platform.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import nvidia
+    except ImportError:
+        return
+    for base in nvidia.__path__:
+        for sub in ("cublas", "cuda_runtime", "cuda_nvrtc"):
+            bin_dir = Path(base) / sub / "bin"
+            if bin_dir.is_dir():
+                os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+def _load_model(
+    model_path=None,
+    n_ctx: int = DEFAULT_N_CTX,
+    n_threads: int | None = None,
+    n_gpu_layers: int = JUDGE_N_GPU_LAYERS,
+):
     """Load (once, then memoise) the GGUF model. Returns None on failure.
 
-    _LOAD_FAILED latches so a missing model file warns once rather than on every row.
+    Tries GPU offload first (n_gpu_layers), falling back to CPU-only (0) if
+    that raises for any reason -- a GPU-specific failure (a missing CUDA
+    runtime, an incompatible build) must not turn into "every row judged
+    unsure", which is what _LOAD_FAILED otherwise means everywhere else in
+    this module. _LOAD_FAILED latches only once both attempts have failed
+    (or immediately if the GGUF file itself is missing), so this still warns
+    once rather than on every row.
     """
     global _MODEL, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
 
     path = Path(model_path or JUDGE_MODEL_PATH)
-    try:
-        if not path.exists():
-            raise FileNotFoundError(f"no GGUF model at {path}")
-        from llama_cpp import Llama
-
-        logger.info(f"Loading judge model from {path} (CPU, n_ctx={n_ctx})")
-        _MODEL = Llama(
-            model_path=str(path),
-            n_ctx=n_ctx,
-            n_threads=n_threads,
-            logits_all=False,
-            verbose=False,
-        )
-        logger.info("Judge model loaded")
-    except Exception as exc:  # noqa: BLE001 - any failure means "no judge"
+    if not path.exists():
         _LOAD_FAILED = True
         logger.warning(
-            f"Judge backend unavailable ({type(exc).__name__}: {exc}); "
+            f"Judge backend unavailable (no GGUF model at {path}); "
             "every row will be judged 'unsure', i.e. discarded"
         )
-        _MODEL = None
+        return None
+
+    _prepend_cuda_dlls_to_path()
+    from llama_cpp import Llama
+
+    attempts = [n_gpu_layers] if n_gpu_layers == 0 else [n_gpu_layers, 0]
+    for i, layers in enumerate(attempts):
+        try:
+            logger.info(
+                f"Loading judge model from {path} "
+                f"({'GPU, n_gpu_layers=' + str(layers) if layers else 'CPU'}, n_ctx={n_ctx})"
+            )
+            _MODEL = Llama(
+                model_path=str(path),
+                n_ctx=n_ctx,
+                n_threads=n_threads,
+                n_gpu_layers=layers,
+                n_batch=JUDGE_N_BATCH,
+                n_ubatch=JUDGE_N_UBATCH,
+                flash_attn=JUDGE_FLASH_ATTN and layers != 0,
+                type_k=JUDGE_KV_CACHE_TYPE if layers != 0 else None,
+                type_v=JUDGE_KV_CACHE_TYPE if layers != 0 else None,
+                logits_all=False,
+                verbose=False,
+            )
+            logger.info("Judge model loaded")
+            return _MODEL
+        except Exception as exc:  # noqa: BLE001 - failure here means "try the next attempt"
+            if i < len(attempts) - 1:
+                logger.warning(f"GPU load failed ({type(exc).__name__}: {exc}); falling back to CPU")
+                continue
+            _LOAD_FAILED = True
+            logger.warning(
+                f"Judge backend unavailable ({type(exc).__name__}: {exc}); "
+                "every row will be judged 'unsure', i.e. discarded"
+            )
+            _MODEL = None
     return _MODEL
 
 
@@ -237,6 +307,7 @@ def judge_corpus(
     prompt_version: str = PROMPT_VERSION,
     chunk: int = JUDGE_CHUNK,
     cache_path=None,
+    require_signal: bool = False,
 ) -> pd.DataFrame:
     """Judge every coref-resolved sentence in `sentences_df`, verdicts merged on.
 
@@ -253,6 +324,12 @@ def judge_corpus(
 
     `judge` is injectable so the loop can run without weights. `articles` supplies each
     context window's headline; both frames are passed in, keeping this a transform.
+
+    `require_signal` raises when every verdict came back `unsure`, which on a real
+    corpus means the backend never answered rather than that the corpus is
+    undecidable. Off by default so the per-row fail-closed contract stays testable
+    with an injected judge; `run_pipeline` turns it on, since that is where an
+    all-discarded corpus would otherwise become a deliverable.
     """
     from stock_predictor.text.coref_eval import (
         CACHE_COLUMNS,
@@ -275,7 +352,11 @@ def judge_corpus(
     )
 
     cache = load_judge_cache(**cache_kwargs)
-    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    mine = cache[
+        (cache["target"] == target)
+        & (cache["model_id"] == model_id)
+        & (cache["prompt_version"] == prompt_version)
+    ]
     answered = set(zip(mine["article_id"], mine["sent_idx"]))
     keys = pd.Series(list(zip(pop["article_id"], pop["sent_idx"])), index=pop.index, dtype=object)
     todo = pop[~keys.isin(answered)] if len(pop) else pop
@@ -334,7 +415,11 @@ def judge_corpus(
                 )
 
     cache = load_judge_cache(**cache_kwargs)
-    mine = cache[(cache["model_id"] == model_id) & (cache["prompt_version"] == prompt_version)]
+    mine = cache[
+        (cache["target"] == target)
+        & (cache["model_id"] == model_id)
+        & (cache["prompt_version"] == prompt_version)
+    ]
     out = out.merge(
         mine[["article_id", "sent_idx", "answer"]].rename(columns={"answer": "judge_answer"}),
         on=["article_id", "sent_idx"],
@@ -350,8 +435,28 @@ def judge_corpus(
     out["judge_accepted"] = ~in_population | out["judge_answer"].map(accept_only).astype(bool)
 
     verdicts = out["judge_answer"].value_counts().to_dict()
+    n_verdicts = int(out["judge_answer"].notna().sum())
     logger.info(
-        f"judge_corpus: {int(out['judge_answer'].notna().sum())} rows carry a verdict "
+        f"judge_corpus: {n_verdicts} rows carry a verdict "
         f"({verdicts}); {int((~out['judge_accepted']).sum())} rows dropped by the gate"
     )
+
+    # Failing closed is right per row: one bad answer should cost that row, not
+    # the run. Across a whole corpus it is a different claim -- a real judge on a
+    # real corpus produces a mix, so all-`unsure` means the judge never actually
+    # ran (weights missing, or no memory left to load them), and every verdict
+    # cached above is an artefact of that rather than a measurement. Raise rather
+    # than return, because the alternative is a deliverable that looks complete,
+    # silently carries no coref-resolved sentence at all, and caches the failure
+    # for every later run to reuse.
+    if require_signal and n_verdicts and verdicts.get("unsure", 0) == n_verdicts:
+        raise RuntimeError(
+            f"judge_corpus: all {n_verdicts} verdicts are 'unsure' for {target}, which means "
+            "the judge backend never answered (missing weights, or no free memory to load "
+            "them) rather than that the corpus is genuinely undecidable. Refusing to build "
+            "features on it. Check the load warnings above, free GPU memory if the model "
+            f"could not be loaded, then delete this target's rows from the cache "
+            f"({COREF_JUDGE_CACHE_PATH.name}) and re-run."
+        )
+
     return out
