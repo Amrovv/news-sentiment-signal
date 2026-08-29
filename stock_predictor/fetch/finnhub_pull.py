@@ -19,13 +19,13 @@ Nothing else runs on import.
 """
 
 import argparse
+from datetime import UTC, datetime
 import time
-from datetime import datetime, timezone
 
 import finnhub
+from loguru import logger
 import pandas as pd
 import requests
-from loguru import logger
 
 from stock_predictor.config import (
     FETCH_CAP_WARN_COUNT,
@@ -51,10 +51,12 @@ def get_client() -> finnhub.Client:
 
 def to_utc(ts: int) -> datetime:
     """Convert a unix timestamp (seconds) to a timezone-aware UTC datetime."""
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    return datetime.fromtimestamp(ts, tz=UTC)
 
 
-def _fetch_window(client: finnhub.Client, ticker: str, start: pd.Timestamp, window_end: pd.Timestamp) -> list:
+def _fetch_window(
+    client: finnhub.Client, ticker: str, start: pd.Timestamp, window_end: pd.Timestamp
+) -> list:
     """Call company_news for one window, retrying a transient network error
     up to FETCH_RETRY_ATTEMPTS times before giving up on this window alone.
 
@@ -147,7 +149,9 @@ def pull_company_news(
     # scrape_corpus) multiplies rather than just double-counts.
     n_dupes = df["article_id"].duplicated().sum() if len(df) else 0
     if n_dupes:
-        logger.warning(f"{ticker}: dropping {n_dupes} duplicate article_id rows from overlapping windows")
+        logger.warning(
+            f"{ticker}: dropping {n_dupes} duplicate article_id rows from overlapping windows"
+        )
         df = df.drop_duplicates(subset="article_id", keep="first").reset_index(drop=True)
 
     return df
@@ -158,9 +162,15 @@ def main() -> None:
     `data/raw/{TICKER}_raw_articles.parquet`."""
     parser = argparse.ArgumentParser(description="Pull raw Finnhub company news for one ticker.")
     parser.add_argument("ticker", help='Symbol to query, e.g. "TSLA".')
-    parser.add_argument("--from", dest="_from", default=NEWS_START_DATE, help="Inclusive start date, YYYY-MM-DD.")
-    parser.add_argument("--to", dest="to", default=NEWS_END_DATE, help="Inclusive end date, YYYY-MM-DD.")
-    parser.add_argument("--window-days", type=int, default=1, help="Size of each query window, in days.")
+    parser.add_argument(
+        "--from", dest="_from", default=NEWS_START_DATE, help="Inclusive start date, YYYY-MM-DD."
+    )
+    parser.add_argument(
+        "--to", dest="to", default=NEWS_END_DATE, help="Inclusive end date, YYYY-MM-DD."
+    )
+    parser.add_argument(
+        "--window-days", type=int, default=1, help="Size of each query window, in days."
+    )
     parser.add_argument("--pause", type=float, default=1.0, help="Seconds to sleep between calls.")
     args = parser.parse_args()
 

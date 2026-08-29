@@ -23,20 +23,20 @@ not just a theoretical one. Nothing else runs on import.
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import UTC
 import json
 import math
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import timezone
 from urllib.parse import urlparse
 
-import pandas as pd
-import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as date_parser
 from loguru import logger
+import pandas as pd
+import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -64,12 +64,16 @@ def make_session() -> requests.Session:
     # worker), and return the final response instead of raising, so a
     # throttle shows as 429.
     retry = Retry(
-        total=2, backoff_factor=0.5, backoff_max=8,
+        total=2,
+        backoff_factor=0.5,
+        backoff_max=8,
         status_forcelist=[429, 500, 502, 503, 504],
-        respect_retry_after_header=False, raise_on_status=False,
+        respect_retry_after_header=False,
+        raise_on_status=False,
     )
     adapter = HTTPAdapter(
-        max_retries=retry, pool_connections=SCRAPE_MAX_WORKERS,
+        max_retries=retry,
+        pool_connections=SCRAPE_MAX_WORKERS,
         pool_maxsize=SCRAPE_MAX_WORKERS * 2,
     )
     s.mount("https://", adapter)
@@ -104,7 +108,7 @@ def _ld_objects(soup):
             data = json.loads(tag.string or "")
         except (json.JSONDecodeError, TypeError):
             continue
-        for obj in (data if isinstance(data, list) else [data]):
+        for obj in data if isinstance(data, list) else [data]:
             if isinstance(obj, dict):
                 yield obj
 
@@ -115,7 +119,11 @@ def _true_source(soup, host):
     for obj in _ld_objects(soup):
         prov = obj.get("provider")
         if provider is None and prov:
-            provider = prov.get("name") if isinstance(prov, dict) else (prov if isinstance(prov, str) else None)
+            provider = (
+                prov.get("name")
+                if isinstance(prov, dict)
+                else (prov if isinstance(prov, str) else None)
+            )
         pub = obj.get("publisher")
         if publisher is None and isinstance(pub, dict) and pub.get("name"):
             publisher = pub["name"]
@@ -141,7 +149,7 @@ def _to_utc(value):
         return None
     if dt.tzinfo is None:
         return None
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def _resolve_time(candidate, api_utc, cross_host):
@@ -177,10 +185,17 @@ def process_article(row, session):
     """Fetch one article once and derive source, UTC time, and body. A second
     fetch fires only to follow a cross-host canonical link for the true time."""
     out = {
-        "article_id": row["article_id"], "true_source": None, "utc": None,
-        "time_source": None, "raw_body": None, "processed_body": None,
-        "status": None, "source_ok": False, "corrected": False,
-        "text_ok": False, "n_fetch": 0,
+        "article_id": row["article_id"],
+        "true_source": None,
+        "utc": None,
+        "time_source": None,
+        "raw_body": None,
+        "processed_body": None,
+        "status": None,
+        "source_ok": False,
+        "corrected": False,
+        "text_ok": False,
+        "n_fetch": 0,
     }
     url = row["url"]
     try:
@@ -246,21 +261,41 @@ def scrape_corpus(articles: pd.DataFrame, max_workers: int = SCRAPE_MAX_WORKERS)
     open_articles = articles[articles["source"].isin(OPEN_SOURCES)].copy()
     results = run_pipeline(open_articles, max_workers=max_workers)
     merged = open_articles.merge(
-        results[[
-            "article_id", "true_source", "utc", "raw_body", "processed_body",
-            "status", "source_ok", "corrected", "time_source", "text_ok", "n_fetch",
-        ]],
-        on="article_id", how="left",
+        results[
+            [
+                "article_id",
+                "true_source",
+                "utc",
+                "raw_body",
+                "processed_body",
+                "status",
+                "source_ok",
+                "corrected",
+                "time_source",
+                "text_ok",
+                "n_fetch",
+            ]
+        ],
+        on="article_id",
+        how="left",
     )
 
     accept = merged["text_ok"]
     proc = merged[accept].copy()
     proc["source"] = proc["true_source"].where(proc["source_ok"], proc["source"])
     proc["timestamp_utc"] = proc["utc"]
-    return proc[[
-        "article_id", "headline", "summary", "source", "url",
-        "timestamp_utc", "raw_body", "processed_body",
-    ]].reset_index(drop=True)
+    return proc[
+        [
+            "article_id",
+            "headline",
+            "summary",
+            "source",
+            "url",
+            "timestamp_utc",
+            "raw_body",
+            "processed_body",
+        ]
+    ].reset_index(drop=True)
 
 
 def scrape_corpus_chunked(
@@ -311,7 +346,9 @@ def main() -> None:
     parser.add_argument("ticker", help='Symbol whose raw pull to process, e.g. "TSLA".')
     parser.add_argument("--max-workers", type=int, default=SCRAPE_MAX_WORKERS)
     parser.add_argument(
-        "--chunk-size", type=int, default=SCRAPE_CHUNK_SIZE,
+        "--chunk-size",
+        type=int,
+        default=SCRAPE_CHUNK_SIZE,
         help="Articles per checkpointed chunk.",
     )
     args = parser.parse_args()

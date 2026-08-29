@@ -20,7 +20,42 @@ EXTERNAL_DATA_DIR = DATA_DIR / "external"
 MODELS_DIR = PROJ_ROOT / "models"
 
 REPORTS_DIR = PROJ_ROOT / "reports"
+
+# Figures written by notebooks, which name their own files after the notebook
+# that drew them (3.4-relative-sentiment-per-fold.png). Generated reports do not
+# write here -- each one keeps its figures beside itself, see report_dir().
 FIGURES_DIR = REPORTS_DIR / "figures"
+
+# Reports are grouped by the pipeline that generates them, one directory each,
+# because a flat reports/ becomes unreadable once four tickers each contribute a
+# fetch, market and merge report plus their figures. A section owns its figures:
+#
+#     reports/fetch/TSLA_raw_fetch_report.md
+#     reports/fetch/figures/TSLA_raw_fetch_daily.png
+#
+# so a report and the images it links move, or are deleted, as one unit.
+REPORT_SECTIONS = ["fetch", "market", "merge", "text", "findings"]
+
+
+def report_dir(section: str) -> Path:
+    """Directory for one pipeline's reports, created on demand."""
+    if section not in REPORT_SECTIONS:
+        raise ValueError(f"Unknown report section {section!r}; expected one of {REPORT_SECTIONS}")
+    path = REPORTS_DIR / section
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def report_figures_dir(section: str) -> Path:
+    """Where one pipeline's report figures live, created on demand.
+
+    Reports link these relatively, as `figures/{name}.png`, so a report renders
+    on GitHub, in an editor preview, and after the whole directory is moved.
+    """
+    path = report_dir(section) / "figures"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 # Project constants — single source of truth (no magic constants elsewhere)
 
@@ -206,6 +241,7 @@ def processed_chunk_dir(ticker: str) -> Path:
     """Where scrape.py's chunked run checkpoints each chunk's result."""
     return INTERIM_DATA_DIR / f"{ticker}_processed_chunks"
 
+
 # `company_news` caps results per call regardless of window width and fills
 # most-recent-first (notebooks/modelling/3.0, section 6, diagnosed this as the
 # cause of the original pull's tail-of-month bursts). This is a conservative
@@ -240,7 +276,9 @@ SCRAPE_HEADERS = {
 SCRAPE_MAX_WORKERS = 8
 SCRAPE_TIMEOUT = 12  # seconds
 MIN_BODY_CHARS = 500  # cleaned body shorter than this is a stub, cookie wall, or paywall teaser
-MAX_SHIFT_HOURS = 6  # a scraped time this far from the Finnhub API time is treated as a repost, not a correction
+MAX_SHIFT_HOURS = (
+    6  # a scraped time this far from the Finnhub API time is treated as a repost, not a correction
+)
 
 # A cross-host canonical is normally trusted outright (it's the original
 # outlet's own page), but that has no floor against a genuinely old,
@@ -261,7 +299,66 @@ REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
 # whose checkpoint already exists.
 SCRAPE_CHUNK_SIZE = 500
 
-LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
+# The 3-day horizon was collected and examined, then dropped: notebook 3.0's
+# EDA found its columns carry close to no signal, and 3.1 excluded them from
+# the model-ready table on that basis. Building them anyway would put two
+# forward-looking columns in the table that nothing is allowed to use, which is
+# a leak waiting to happen rather than an option kept open. Re-add 3 here to
+# rebuild them.
+LABEL_HORIZONS_DAYS = [1]
+
+# --- Market layer ------------------------------------------------------------
+# Price history and the NYSE calendar are shared across tickers, so they live in
+# one file each: yfinance returns every symbol in a single frame and the trading
+# calendar is the same for all of them. Earnings dates are per-company, so they
+# follow the fetch layer's `{TICKER}_` convention instead.
+RAW_OHLCV_PATH = RAW_DATA_DIR / "raw_ohlcv.parquet"
+RAW_SCHEDULE_PATH = RAW_DATA_DIR / "raw_schedule.parquet"
+
+
+def raw_earnings_path(ticker: str) -> Path:
+    """Where prices.py's CLI writes one ticker's earnings calendar."""
+    return RAW_DATA_DIR / f"{ticker}_raw_earnings.parquet"
+
+
+def merged_dir(ticker: str) -> Path:
+    """Where merge.run_pipeline writes one ticker's joined table.
+
+    The pooled table sits beside these directories rather than inside one, at
+    `data/processed/merged/pooled.parquet`, since it belongs to no single ticker.
+    """
+    return PROCESSED_DATA_DIR / "merged" / ticker
+
+
+def market_run_dir(ticker: str) -> Path:
+    """Where market.run_pipeline writes one ticker's deliverable and its data dictionary.
+
+    Mirrors the text layer's data/processed/pipeline_run/{TICKER}/, so the two
+    tables a model merges sit at symmetric paths.
+    """
+    return PROCESSED_DATA_DIR / "market_run" / ticker
+
+
+# Every pre-publication feature needs history *before* the first article, and
+# the 3-day label needs bars *after* the last one. Both windows are widened by
+# this much beyond the news window: 20 trading days of lookback is ~28 calendar
+# days, and 40 leaves margin for holidays.
+PRICE_PAD_DAYS = 40
+SCHEDULE_PAD_DAYS = 10
+
+# Feature windows. Changing one changes the column it names, not its meaning:
+# momentum_5d is defined as "cumulative return over the 5 trading days before
+# publication", so the column name is generated from this list.
+MOMENTUM_LOOKBACKS = [1, 5, 20]
+VOLATILITY_WINDOW = 20
+BETA_WINDOW = 20
+RELATIVE_VOLUME_WINDOW = 20
+
+# news_volume counts the target's own prior articles in this many days. Scoped
+# to one ticker's corpus, since the pipeline runs per ticker: it measures how
+# noisy coverage of *this* company was going into the article, not how busy the
+# market was overall.
+NEWS_VOLUME_LOOKBACK_DAYS = 3
 
 # --- Entity filter (Goal 2) ---
 MIN_SENT_CHARS = 20  # below this, sentences are scraper residue ("Advertisement", "Read more")

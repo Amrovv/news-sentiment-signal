@@ -206,7 +206,9 @@ def _load_model(
             return _MODEL
         except Exception as exc:  # noqa: BLE001 - failure here means "try the next attempt"
             if i < len(attempts) - 1:
-                logger.warning(f"GPU load failed ({type(exc).__name__}: {exc}); falling back to CPU")
+                logger.warning(
+                    f"GPU load failed ({type(exc).__name__}: {exc}); falling back to CPU"
+                )
                 continue
             _LOAD_FAILED = True
             logger.warning(

@@ -90,7 +90,10 @@ def write_feature_dictionary(final: pd.DataFrame, path) -> None:
     check = burst_check(final)
     daily = check["daily_counts"]
     monthly_fig = plot_monthly_counts(
-        check["per_month"], ticker, "article features", path=path.parent / "article_features_monthly.png"
+        check["per_month"],
+        ticker,
+        "article features",
+        path=path.parent / "article_features_monthly.png",
     )
     daily_fig = plot_daily_counts(
         daily, ticker, "article features", path=path.parent / "article_features_daily.png"

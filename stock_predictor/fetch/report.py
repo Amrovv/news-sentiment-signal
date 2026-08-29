@@ -25,11 +25,16 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # headless: this module writes figures to disk, never shows them
+from loguru import logger
 import matplotlib.pyplot as plt
 import pandas as pd
-from loguru import logger
 
-from stock_predictor.config import FIGURES_DIR, REPORTS_DIR, processed_articles_path, raw_articles_path
+from stock_predictor.config import (
+    processed_articles_path,
+    raw_articles_path,
+    report_dir,
+    report_figures_dir,
+)
 
 
 def _md_table(rows, header) -> str:
@@ -87,7 +92,9 @@ def burst_check(articles: pd.DataFrame, timestamp_col: str = "timestamp_utc") ->
     }
 
 
-def plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str, path: Path | None = None) -> Path:
+def plot_daily_counts(
+    daily_counts: pd.Series, ticker: str, label: str, path: Path | None = None
+) -> Path:
     """Bar chart of articles per calendar day over the corpus span, saved to
     `reports/figures/{ticker}_{label}_fetch_daily.png` unless `path` says
     otherwise.
@@ -108,14 +115,16 @@ def plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str, path: Pa
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    fig_path = path or FIGURES_DIR / f"{ticker}_{label}_fetch_daily.png"
+    fig_path = path or report_figures_dir("fetch") / f"{ticker}_{label}_fetch_daily.png"
     fig_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(fig_path, dpi=120)
     plt.close(fig)
     return fig_path
 
 
-def plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str, path: Path | None = None) -> Path:
+def plot_monthly_counts(
+    per_month: pd.DataFrame, ticker: str, label: str, path: Path | None = None
+) -> Path:
     """Bar chart of articles per calendar month over the corpus span, saved
     to `reports/figures/{ticker}_{label}_fetch_monthly.png` unless `path` says
     otherwise.
@@ -133,7 +142,7 @@ def plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str, path: 
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    fig_path = path or FIGURES_DIR / f"{ticker}_{label}_fetch_monthly.png"
+    fig_path = path or report_figures_dir("fetch") / f"{ticker}_{label}_fetch_monthly.png"
     fig_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(fig_path, dpi=120)
     plt.close(fig)
@@ -153,7 +162,7 @@ def write_fetch_report(
     `label` distinguishes which corpus this is (e.g. "raw" vs "processed")
     so reports for the same ticker don't overwrite each other -- it's a free
     -text tag for the filename and headings, not tied to any dataset schema.
-    `path` overrides the default `REPORTS_DIR / f"{ticker}_{label}_fetch_report.md"`
+    `path` overrides the default `reports/fetch/{ticker}_{label}_fetch_report.md`
     entirely, mainly so a test or a one-off comparison run can write elsewhere
     without clobbering the real report.
     """
@@ -169,33 +178,40 @@ def write_fetch_report(
     )
 
     md.append("## 1. Overview\n")
-    md.append(_md_table([
-        ("total articles", f"{len(articles):,}"),
-        (
-            "date span",
-            (
-                f"{check['span_start']:%Y-%m-%d} to {check['span_end']:%Y-%m-%d} "
-                f"({check['days_in_span']} days)"
-            ),
-        ),
-        (
-            "active days",
-            (
-                f"{check['active_days']} of {check['days_in_span']} "
-                f"({check['active_day_share']:.1%})"
-            ),
-        ),
-        ("longest gap", f"{check['longest_gap_days']} consecutive days with no article"),
-    ], ["metric", "value"]))
+    md.append(
+        _md_table(
+            [
+                ("total articles", f"{len(articles):,}"),
+                (
+                    "date span",
+                    (
+                        f"{check['span_start']:%Y-%m-%d} to {check['span_end']:%Y-%m-%d} "
+                        f"({check['days_in_span']} days)"
+                    ),
+                ),
+                (
+                    "active days",
+                    (
+                        f"{check['active_days']} of {check['days_in_span']} "
+                        f"({check['active_day_share']:.1%})"
+                    ),
+                ),
+                ("longest gap", f"{check['longest_gap_days']} consecutive days with no article"),
+            ],
+            ["metric", "value"],
+        )
+    )
 
     md.append("\n## 2. Articles by month\n")
-    md.append(_md_table(
-        [
-            (str(m), f"{int(r.articles):,}", f"{int(r.active_days)} of {int(r.days_in_month)}")
-            for m, r in per_month.iterrows()
-        ],
-        ["month", "articles", "active days"],
-    ))
+    md.append(
+        _md_table(
+            [
+                (str(m), f"{int(r.articles):,}", f"{int(r.active_days)} of {int(r.days_in_month)}")
+                for m, r in per_month.iterrows()
+            ],
+            ["month", "articles", "active days"],
+        )
+    )
     monthly_fig_path = plot_monthly_counts(per_month, ticker, label)
     md.append(f"\n![{ticker} articles per month](figures/{monthly_fig_path.name})\n")
 
@@ -232,8 +248,7 @@ def write_fetch_report(
         "company actually is, not on matching another ticker's number.\n"
     )
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = path or REPORTS_DIR / f"{ticker}_{label}_fetch_report.md"
+    out_path = path or report_dir("fetch") / f"{ticker}_{label}_fetch_report.md"
     out_path.write_text("\n".join(md), encoding="utf-8")
     return out_path
 
@@ -244,14 +259,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Write a fetch report for one ticker's corpus.")
     parser.add_argument("ticker", help='Symbol whose corpus to report on, e.g. "TSLA".')
     parser.add_argument(
-        "--dataset", choices=["raw", "processed"], default="raw",
+        "--dataset",
+        choices=["raw", "processed"],
+        default="raw",
         help="Which saved corpus to check. Burst is a collection-time artifact, so raw is the default.",
     )
     parser.add_argument("--path", type=Path, default=None, help="Override the input parquet path.")
     args = parser.parse_args()
 
     in_path = args.path or (
-        raw_articles_path(args.ticker) if args.dataset == "raw" else processed_articles_path(args.ticker)
+        raw_articles_path(args.ticker)
+        if args.dataset == "raw"
+        else processed_articles_path(args.ticker)
     )
     # Only the timestamp is read: every number in this report is a function of
     # publication time, and the corpus carries multi-GB body columns alongside

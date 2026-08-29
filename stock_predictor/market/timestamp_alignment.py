@@ -2,8 +2,6 @@ import datetime as dt
 
 import pandas as pd
 
-from stock_predictor.config import NEWS_END_DATE, NEWS_START_DATE
-
 
 def align_timestamp(pub_datetime: dt.datetime, schedule: pd.DataFrame) -> pd.Timestamp:
     """
