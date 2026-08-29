@@ -264,7 +264,13 @@ REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
 # whose checkpoint already exists.
 SCRAPE_CHUNK_SIZE = 500
 
-LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
+# The 3-day horizon was collected and examined, then dropped: notebook 3.0's
+# EDA found its columns carry close to no signal, and 3.1 excluded them from
+# the model-ready table on that basis. Building them anyway would put two
+# forward-looking columns in the table that nothing is allowed to use, which is
+# a leak waiting to happen rather than an option kept open. Re-add 3 here to
+# rebuild them.
+LABEL_HORIZONS_DAYS = [1]
 
 # --- Market layer ------------------------------------------------------------
 # Price history and the NYSE calendar are shared across tickers, so they live in

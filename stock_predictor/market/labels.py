@@ -61,9 +61,6 @@ FEATURE_DESCRIPTIONS = {
         "Target return minus benchmark return over the session at or after publication. "
         "The label. Deliberately forward-looking, the only column here that is."
     ),
-    "abnormal_return_3d": (
-        "The same over three sessions. For the horizon study, not used as the label."
-    ),
     "label_direction": (
         "sign(abnormal_return_1d) as -1 / 0 / 1. 0 means the return was missing or exactly "
         "flat, so it is not a third class to predict."

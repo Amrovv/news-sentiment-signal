@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from stock_predictor.config import LABEL_HORIZONS_DAYS
 from stock_predictor.market import labels
 from stock_predictor.market.features import abnormal_return_for, session_for
 from stock_predictor.market.timestamp_alignment import align_timestamp
@@ -173,7 +174,14 @@ def test_sorted_by_timestamp(built):
 
 
 def test_rows_without_any_label_are_dropped(built):
-    assert not built[["abnormal_return_1d", "abnormal_return_3d"]].isna().all(axis=1).any()
+    label_cols = [f"abnormal_return_{h}d" for h in LABEL_HORIZONS_DAYS]
+    assert not built[label_cols].isna().all(axis=1).any()
+
+
+def test_the_three_day_horizon_is_not_built(built):
+    """3.0 found it carries no signal and 3.1 excluded it; it must not reappear."""
+    assert "abnormal_return_3d" not in built.columns
+    assert not any(c.endswith("_3d") for c in built.columns)
 
 
 def test_label_direction_is_the_sign_of_the_1d_return(built):
