@@ -318,7 +318,7 @@ def build_market_features(
     aligned = align_sessions(out["timestamp_utc"], schedule)
     # Kept as a column, not just used and discarded. It is the unit every row
     # sharing a label belongs to, so the evaluation harness groups folds on it:
-    # evaluate_v2 reads it by name and refuses to run without it. Deriving it
+    # evaluate() reads it by name and refuses to run without it. Deriving it
     # downstream would mean every consumer reloading the trading calendar to
     # recompute something this function already knows.
     out["session_open"] = aligned

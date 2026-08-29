@@ -12,7 +12,6 @@ Modules:
     labels.py               abnormal returns + market features, one row per article
     run_pipeline.py         corpus in, market_features.parquet out, per ticker
     evaluate.py             walk-forward harness      (every model runs through this)
-    evaluate_v2.py          row-grouped folds + size-weighted aggregation
 
 Still to promote from notebooks when stable / reused:
     ladder.py          LightGBM stages (a) and (b)
