@@ -32,7 +32,10 @@ from stock_predictor.config import (
     BOILERPLATE_MIN_ARTICLES,
     COMPANIES,
     MIN_SENT_CHARS,
+    SPACY_EXCLUDE,
     SPACY_MODEL,
+    SPACY_MULTIPROCESS_MIN_DOCS,
+    SPACY_N_PROCESS,
     SPACY_PIPE_BATCH_SIZE,
     USE_COREF,
 )
@@ -61,16 +64,19 @@ def _get_nlp():
 
     DO NOT ADD "ner" TO THE EXCLUDE LIST. It looks unused and is expensive, but PERSON
     entities are load-bearing in map_coref_clusters(), _coref_hits_in_sentence() and
-    _is_person_like(). Emptying doc.ents breaks all three without raising.
+    _is_person_like(). Emptying doc.ents breaks all three without raising. The same
+    goes for "parser", which is what produces doc.sents and the dep_/head fields
+    _is_expletive_token() reads. What SPACY_EXCLUDE does drop is the tagger,
+    attribute_ruler and lemmatizer, whose pos_/tag_/lemma_ output nothing here reads.
     """
     global _NLP
     if _NLP is None:
-        logger.info(f"Loading spaCy model '{SPACY_MODEL}' (excluding lemmatizer; ner enabled)")
-        _NLP = spacy.load(SPACY_MODEL, exclude=["lemmatizer"])
+        logger.info(f"Loading spaCy model '{SPACY_MODEL}' (excluding {', '.join(SPACY_EXCLUDE)})")
+        _NLP = spacy.load(SPACY_MODEL, exclude=SPACY_EXCLUDE)
     return _NLP
 
 
-def split_sentences(texts: list[str], nlp=None, return_spans: bool = False):
+def split_sentences(texts: list[str], nlp=None, return_spans: bool = False, n_process=None):
     """Sentence-split a batch of article bodies through nlp.pipe().
 
     Sentences shorter than MIN_SENT_CHARS after stripping are dropped as scraper
@@ -80,6 +86,12 @@ def split_sentences(texts: list[str], nlp=None, return_spans: bool = False):
     parse and entities computed to find the boundaries. The same length filter applies
     either way, so both forms select the same sentences.
 
+    `n_process` defaults to SPACY_N_PROCESS on a batch of at least
+    SPACY_MULTIPROCESS_MIN_DOCS documents and to 1 below that, since spawning
+    workers costs more than it saves on a handful of texts. Workers spawn on
+    Windows, so a caller passing more than 1 must be importable and guarded by
+    `if __name__ == "__main__"`.
+
     Returns one list per input article, in input order.
     """
     if nlp is None:
@@ -87,8 +99,13 @@ def split_sentences(texts: list[str], nlp=None, return_spans: bool = False):
 
     cleaned = [_fix_missing_space(t) if isinstance(t, str) else "" for t in texts]
 
+    if n_process is None:
+        n_process = SPACY_N_PROCESS if len(cleaned) >= SPACY_MULTIPROCESS_MIN_DOCS else 1
+    if n_process > 1:
+        logger.info(f"Parsing {len(cleaned)} documents across {n_process} processes")
+
     results: list[list] = []
-    for doc in nlp.pipe(cleaned, batch_size=SPACY_PIPE_BATCH_SIZE):
+    for doc in nlp.pipe(cleaned, batch_size=SPACY_PIPE_BATCH_SIZE, n_process=n_process):
         if return_spans:
             spans = [s for s in doc.sents if len(s.text.strip()) >= MIN_SENT_CHARS]
             results.append(spans)

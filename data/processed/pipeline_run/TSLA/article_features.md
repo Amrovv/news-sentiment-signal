@@ -6,6 +6,23 @@ One row per article, judge-gated. The final output of the text pipeline and the 
 
 Produced by `stock_predictor.text.run_pipeline`, Phase E. Every score is a fusion of FinBERT and DeBERTa ABSA at `CONF_FLOOR`; no raw probability triples and no provenance columns are carried. Sentences the referent judge rejected contribute to nothing here.
 
+## Distribution over time
+
+How the surviving rows fall across the span. This is the population a price model actually joins against, so it is the relevance filter and the judge gate already applied -- not the shape of the fetch, which `reports/{ticker}_*_fetch_report.md` covers. A month reading far below its neighbours here, on a corpus the fetch report shows as steady, means articles were dropped downstream rather than never collected.
+
+| metric | value |
+| --- | --- |
+| articles | 9,073 |
+| date span | 2025-09-01 to 2026-08-01 (335 days) |
+| active days | 335 of 335 (100.0%) |
+| longest gap | 0 consecutive days with no article |
+| articles/day | min 1, median 25, max 102 |
+
+
+![TSLA article features per month](article_features_monthly.png)
+
+![TSLA article features per day](article_features_daily.png)
+
 ## Identity
 
 | column | type | description |

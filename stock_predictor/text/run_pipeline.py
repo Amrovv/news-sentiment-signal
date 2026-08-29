@@ -35,6 +35,12 @@ from loguru import logger
 import pandas as pd
 
 from stock_predictor.config import INTERIM_DATA_DIR, PROCESSED_DATA_DIR, processed_articles_path
+from stock_predictor.fetch.report import (
+    _md_table,
+    burst_check,
+    plot_daily_counts,
+    plot_monthly_counts,
+)
 from stock_predictor.text import absa, coref_judge, device, entity_filter, fusion, sentiment
 
 # Identity columns carried onto the final table. timestamp_utc is what the market
@@ -67,12 +73,28 @@ def load_corpus(path) -> pd.DataFrame:
 
 
 def write_feature_dictionary(final: pd.DataFrame, path) -> None:
-    """Emit the data dictionary that ships beside article_features.parquet.
+    """Emit the data dictionary that ships beside article_features.parquet,
+    with the two distribution charts it references written alongside it.
 
-    Generated from the frame rather than maintained by hand, so coverage and
-    column list cannot drift from the file they describe.
+    Generated from the frame rather than maintained by hand, so coverage,
+    column list and charts cannot drift from the file they describe. The
+    figures land in the same directory as the document, which keeps a
+    ticker's deliverable self-contained and the markdown links relative.
     """
     identity = [c for c in IDENTITY_COLUMNS if c in final.columns]
+
+    # burst_check and the two plotters are the fetch layer's, reused rather
+    # than reimplemented: the question ("how do these rows fall over the
+    # span?") is identical, only the population differs.
+    ticker = final["ticker"].iloc[0] if len(final) else ""
+    check = burst_check(final)
+    daily = check["daily_counts"]
+    monthly_fig = plot_monthly_counts(
+        check["per_month"], ticker, "article features", path=path.parent / "article_features_monthly.png"
+    )
+    daily_fig = plot_daily_counts(
+        daily, ticker, "article features", path=path.parent / "article_features_daily.png"
+    )
     lines = [
         "# `article_features.parquet`",
         "",
@@ -91,6 +113,49 @@ def write_feature_dictionary(final: pd.DataFrame, path) -> None:
             "FinBERT and DeBERTa ABSA at `CONF_FLOOR`; no raw probability triples and no provenance "
             "columns are carried. Sentences the referent judge rejected contribute to nothing here."
         ),
+        "",
+        "## Distribution over time",
+        "",
+        (
+            "How the surviving rows fall across the span. This is the population a price model "
+            "actually joins against, so it is the relevance filter and the judge gate already "
+            "applied -- not the shape of the fetch, which `reports/{ticker}_*_fetch_report.md` "
+            "covers. A month reading far below its neighbours here, on a corpus the fetch report "
+            "shows as steady, means articles were dropped downstream rather than never collected."
+        ),
+        "",
+        _md_table(
+            [
+                ("articles", f"{len(final):,}"),
+                (
+                    "date span",
+                    (
+                        f"{check['span_start']:%Y-%m-%d} to {check['span_end']:%Y-%m-%d} "
+                        f"({check['days_in_span']} days)"
+                    ),
+                ),
+                (
+                    "active days",
+                    (
+                        f"{check['active_days']} of {check['days_in_span']} "
+                        f"({check['active_day_share']:.1%})"
+                    ),
+                ),
+                ("longest gap", f"{check['longest_gap_days']} consecutive days with no article"),
+                (
+                    "articles/day",
+                    (
+                        f"min {int(daily.min())}, median {int(daily.median())}, "
+                        f"max {int(daily.max())}"
+                    ),
+                ),
+            ],
+            ["metric", "value"],
+        ),
+        "",
+        f"![{ticker} article features per month]({monthly_fig.name})",
+        "",
+        f"![{ticker} article features per day]({daily_fig.name})",
         "",
         "## Identity",
         "",

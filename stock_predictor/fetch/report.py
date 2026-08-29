@@ -87,14 +87,18 @@ def burst_check(articles: pd.DataFrame, timestamp_col: str = "timestamp_utc") ->
     }
 
 
-def _plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str) -> Path:
+def plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str, path: Path | None = None) -> Path:
     """Bar chart of articles per calendar day over the corpus span, saved to
-    `reports/figures/{ticker}_{label}_fetch_daily.png`.
+    `reports/figures/{ticker}_{label}_fetch_daily.png` unless `path` says
+    otherwise.
 
     A day-by-day markdown table gets unreadable past a few dozen rows; the
     burst pattern this report exists to catch (or rule out) is exactly the
     kind of shape -- long flat gaps, tight clusters -- that a chart shows at
     a glance and a table buries.
+
+    `path` lets a caller that keeps its figures beside its own document (the
+    text pipeline's per-ticker deliverable) reuse this rather than repeat it.
     """
     fig, ax = plt.subplots(figsize=(13, 4))
     ax.bar(daily_counts.index, daily_counts.values, width=1.0, color="#4C72B0")
@@ -104,16 +108,17 @@ def _plot_daily_counts(daily_counts: pd.Series, ticker: str, label: str) -> Path
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    fig_path = FIGURES_DIR / f"{ticker}_{label}_fetch_daily.png"
+    fig_path = path or FIGURES_DIR / f"{ticker}_{label}_fetch_daily.png"
+    fig_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(fig_path, dpi=120)
     plt.close(fig)
     return fig_path
 
 
-def _plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str) -> Path:
+def plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str, path: Path | None = None) -> Path:
     """Bar chart of articles per calendar month over the corpus span, saved
-    to `reports/figures/{ticker}_{label}_fetch_monthly.png`.
+    to `reports/figures/{ticker}_{label}_fetch_monthly.png` unless `path` says
+    otherwise.
 
     Alongside the monthly table, not instead of it -- a dozen or so months
     reads fine as a table, but a chart is what makes an uneven, tail-heavy
@@ -128,8 +133,8 @@ def _plot_monthly_counts(per_month: pd.DataFrame, ticker: str, label: str) -> Pa
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    fig_path = FIGURES_DIR / f"{ticker}_{label}_fetch_monthly.png"
+    fig_path = path or FIGURES_DIR / f"{ticker}_{label}_fetch_monthly.png"
+    fig_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(fig_path, dpi=120)
     plt.close(fig)
     return fig_path
@@ -191,10 +196,10 @@ def write_fetch_report(
         ],
         ["month", "articles", "active days"],
     ))
-    monthly_fig_path = _plot_monthly_counts(per_month, ticker, label)
+    monthly_fig_path = plot_monthly_counts(per_month, ticker, label)
     md.append(f"\n![{ticker} articles per month](figures/{monthly_fig_path.name})\n")
 
-    fig_path = _plot_daily_counts(daily_counts, ticker, label)
+    fig_path = plot_daily_counts(daily_counts, ticker, label)
     md.append("\n## 3. Articles by day\n")
     md.append(
         f"min {int(daily_counts.min())}, median {int(daily_counts.median())}, "

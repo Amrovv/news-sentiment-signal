@@ -266,7 +266,26 @@ LABEL_HORIZONS_DAYS = [1, 3]  # confirm w/ Person B
 # --- Entity filter (Goal 2) ---
 MIN_SENT_CHARS = 20  # below this, sentences are scraper residue ("Advertisement", "Read more")
 SPACY_MODEL = "en_core_web_sm"
-SPACY_PIPE_BATCH_SIZE = 50
+SPACY_PIPE_BATCH_SIZE = 200
+
+# Pipeline components loaded but never read. entity_filter needs the parser
+# (doc.sents, token.dep_, token.head) and the NER (doc.ents); nothing anywhere
+# reads pos_, tag_, morph or lemma_, which is all the tagger, attribute_ruler
+# and lemmatizer produce. Both the parser and the NER listen to tok2vec rather
+# than to the tagger, so dropping these does not change what they predict.
+# DO NOT add "ner" or "parser" here -- see the warning on _get_nlp().
+SPACY_EXCLUDE = ["lemmatizer", "tagger", "attribute_ruler"]
+
+# Worker processes for the sentence-splitting parse, the pipeline's largest
+# CPU-bound cost (~11.5 min for 12k articles single-process). Workers spawn on
+# Windows, so the caller must sit under an `if __name__ == "__main__"` guard --
+# run_pipeline does. Each worker holds its own copy of the model and the Docs in
+# flight, so this buys wall time with memory; 4 of 6 cores leaves room for both.
+SPACY_N_PROCESS = 4
+
+# Below this many documents the spawn cost outweighs the parallelism, so short
+# batches (tests, notebooks, a handful of articles) keep the single-process path.
+SPACY_MULTIPROCESS_MIN_DOCS = 500
 
 # --- Coreference resolution -------------------------------------------------
 # A HuggingFace id consumed by fastcoref. F-Coref is ~90M params and CPU-viable;
