@@ -1,6 +1,6 @@
 import pandas as pd
-import pytest
 from pandas.testing import assert_frame_equal
+import pytest
 
 from stock_predictor.config import LEAD_SENTENCE_WINDOW
 from stock_predictor.text import fusion
@@ -301,8 +301,8 @@ def _sent_row(
     sent_idx,
     text,
     mentions_target,
-    _unused_other,   # other-company detection removed; slot kept so the many
-                     # positional call sites below need no churn
+    _unused_other,  # other-company detection removed; slot kept so the many
+    # positional call sites below need no churn
     pos,
     neg,
     neu,
@@ -538,9 +538,30 @@ def test_aggregate_article_features_multiple_articles_independent():
 
 
 def _sent_row_with_absa(
-    article_id, sent_idx, text, mentions_target, _unused_other, pos, neg, neu, absa_pos, absa_neg, absa_neu
+    article_id,
+    sent_idx,
+    text,
+    mentions_target,
+    _unused_other,
+    pos,
+    neg,
+    neu,
+    absa_pos,
+    absa_neg,
+    absa_neu,
+    mentions_ceo=False,
 ):
-    row = _sent_row(article_id, sent_idx, text, mentions_target, _unused_other, pos, neg, neu)
+    row = _sent_row(
+        article_id,
+        sent_idx,
+        text,
+        mentions_target,
+        _unused_other,
+        pos,
+        neg,
+        neu,
+        mentions_ceo=mentions_ceo,
+    )
     row["absa_pos"] = absa_pos
     row["absa_neg"] = absa_neg
     row["absa_neu"] = absa_neu
@@ -695,9 +716,7 @@ def test_needs_score_missing_mentions_column_raises():
 
 
 def test_needs_score_empty_frame_returns_empty_bool_series():
-    df = pd.DataFrame(
-        columns=["mentions_target", "mentions_ceo", "is_boilerplate"]
-    )
+    df = pd.DataFrame(columns=["mentions_target", "mentions_ceo", "is_boilerplate"])
     mask = needs_score(df)
     assert len(mask) == 0
     assert mask.dtype == bool
@@ -753,10 +772,20 @@ def _bucket_coverage_rows():
             0.10,
         ),
         _sent_row(200, 1, "Tesla still leads on software.", True, False, 0.65, 0.20, 0.15),
-        _sent_row(200, 2, "Musk unveiled a new rocket.", False, False, 0.40, 0.35, 0.25,
-                  mentions_ceo=True),
-        _sent_row(200, 3, "Musk said Tesla is fine.", True, False, 0.55, 0.25, 0.20,
-                  mentions_ceo=True),
+        _sent_row(
+            200,
+            2,
+            "Musk unveiled a new rocket.",
+            False,
+            False,
+            0.40,
+            0.35,
+            0.25,
+            mentions_ceo=True,
+        ),
+        _sent_row(
+            200, 3, "Musk said Tesla is fine.", True, False, 0.55, 0.25, 0.20, mentions_ceo=True
+        ),
         _sent_row(
             200,
             4,
@@ -887,6 +916,7 @@ def test_analyze_unchanged_keys(tmp_path):
         "n_entity_sents",
         "n_boilerplate_sents",
         "n_ceo_sents",
+        "n_ceo_mention_sents",
         "has_ceo_mention",
         "n_total_sents",
         "entity_share",
@@ -964,7 +994,17 @@ def _empty_headline_frames():
 def test_build_model_features_shrinks_single_sentence_mean_toward_zero():
     rows = [
         _sent_row_with_absa(
-            1, 0, "Tesla obliterates every rival forever.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+            1,
+            0,
+            "Tesla obliterates every rival forever.",
+            True,
+            False,
+            0.9,
+            0.05,
+            0.05,
+            0.9,
+            0.05,
+            0.05,
         ),
     ]
     sentences_df = pd.DataFrame(rows)
@@ -1011,7 +1051,17 @@ def test_build_model_features_shrinks_trusted_mean_by_its_own_population():
     # n_trusted_sents, not n_entity_sents.
     rows = [
         _sent_row_with_absa(
-            3, 0, "Tesla surges on strong deliveries.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+            3,
+            0,
+            "Tesla surges on strong deliveries.",
+            True,
+            False,
+            0.9,
+            0.05,
+            0.05,
+            0.9,
+            0.05,
+            0.05,
         ),
         _sent_row_with_absa(
             3, 1, "It also raised guidance.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
@@ -1036,7 +1086,17 @@ def test_build_model_features_shrinks_trusted_mean_by_its_own_population():
 def test_build_model_features_leaves_lead_and_ceo_columns_unshrunk():
     rows = [
         _sent_row_with_absa(
-            4, 0, "Tesla stock soars on record deliveries.", True, False, 0.9, 0.05, 0.05, 0.9, 0.05, 0.05
+            4,
+            0,
+            "Tesla stock soars on record deliveries.",
+            True,
+            False,
+            0.9,
+            0.05,
+            0.05,
+            0.9,
+            0.05,
+            0.05,
         ),
     ]
     sentences_df = pd.DataFrame(rows)
@@ -1100,3 +1160,61 @@ def test_build_model_features_has_ceo_mention_false_when_no_ceo_sentence():
 
     assert row["n_ceo_sents"] == 0
     assert row["has_ceo_mention"] == False
+
+
+# ---------------------------------------------------------------------------
+# has_ceo_mention: the population it reports on
+# ---------------------------------------------------------------------------
+
+
+def test_has_ceo_mention_counts_ceo_sentences_that_also_name_the_target():
+    """The flag must not inherit n_ceo_sents' narrower population.
+
+    n_ceo_sents counts CEO sentences that do NOT also name the target, which is a
+    coherent statistic but a different question. About half of real CEO sentences
+    name the company in the same breath ("Musk said Tesla would..."), so deriving
+    the flag from that count reported "no CEO mention" on roughly a third of the
+    articles that actually discuss the CEO.
+    """
+    rows = [
+        _sent_row_with_absa(
+            1,
+            0,
+            "Musk said Tesla would reopen the factory.",
+            True,
+            False,
+            0.6,
+            0.2,
+            0.2,
+            0.6,
+            0.2,
+            0.2,
+            mentions_ceo=True,
+        ),
+        _sent_row_with_absa(1, 1, "Tesla shares rose.", True, False, 0.5, 0.2, 0.3, 0.5, 0.2, 0.3),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    wide = aggregate_article_features(sentences_df)
+    # No CEO-only sentence: the CEO is named alongside the company.
+    assert wide.iloc[0]["n_ceo_sents"] == 0
+    # But the article plainly discusses the CEO.
+    assert wide.iloc[0]["n_ceo_mention_sents"] == 1
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    assert bool(out.iloc[0]["has_ceo_mention"]) is True
+
+
+def test_has_ceo_mention_false_when_no_sentence_mentions_the_ceo():
+    rows = [
+        _sent_row_with_absa(1, 0, "Tesla shares rose.", True, False, 0.5, 0.2, 0.3, 0.5, 0.2, 0.3),
+    ]
+    sentences_df = pd.DataFrame(rows)
+    headline_finbert, headline_absa = _empty_headline_frames()
+
+    wide = aggregate_article_features(sentences_df)
+    assert wide.iloc[0]["n_ceo_mention_sents"] == 0
+
+    out = build_model_features(sentences_df, headline_finbert, headline_absa)
+    assert bool(out.iloc[0]["has_ceo_mention"]) is False
