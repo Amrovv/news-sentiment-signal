@@ -20,7 +20,42 @@ EXTERNAL_DATA_DIR = DATA_DIR / "external"
 MODELS_DIR = PROJ_ROOT / "models"
 
 REPORTS_DIR = PROJ_ROOT / "reports"
+
+# Figures written by notebooks, which name their own files after the notebook
+# that drew them (3.4-relative-sentiment-per-fold.png). Generated reports do not
+# write here -- each one keeps its figures beside itself, see report_dir().
 FIGURES_DIR = REPORTS_DIR / "figures"
+
+# Reports are grouped by the pipeline that generates them, one directory each,
+# because a flat reports/ becomes unreadable once four tickers each contribute a
+# fetch, market and merge report plus their figures. A section owns its figures:
+#
+#     reports/fetch/TSLA_raw_fetch_report.md
+#     reports/fetch/figures/TSLA_raw_fetch_daily.png
+#
+# so a report and the images it links move, or are deleted, as one unit.
+REPORT_SECTIONS = ["fetch", "market", "merge", "text", "findings"]
+
+
+def report_dir(section: str) -> Path:
+    """Directory for one pipeline's reports, created on demand."""
+    if section not in REPORT_SECTIONS:
+        raise ValueError(f"Unknown report section {section!r}; expected one of {REPORT_SECTIONS}")
+    path = REPORTS_DIR / section
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def report_figures_dir(section: str) -> Path:
+    """Where one pipeline's report figures live, created on demand.
+
+    Reports link these relatively, as `figures/{name}.png`, so a report renders
+    on GitHub, in an editor preview, and after the whole directory is moved.
+    """
+    path = report_dir(section) / "figures"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 # Project constants — single source of truth (no magic constants elsewhere)
 
@@ -284,6 +319,15 @@ RAW_SCHEDULE_PATH = RAW_DATA_DIR / "raw_schedule.parquet"
 def raw_earnings_path(ticker: str) -> Path:
     """Where prices.py's CLI writes one ticker's earnings calendar."""
     return RAW_DATA_DIR / f"{ticker}_raw_earnings.parquet"
+
+
+def merged_dir(ticker: str) -> Path:
+    """Where merge.run_pipeline writes one ticker's joined table.
+
+    The pooled table sits beside these directories rather than inside one, at
+    `data/processed/merged/pooled.parquet`, since it belongs to no single ticker.
+    """
+    return PROCESSED_DATA_DIR / "merged" / ticker
 
 
 def market_run_dir(ticker: str) -> Path:

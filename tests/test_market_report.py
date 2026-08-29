@@ -49,8 +49,10 @@ def final() -> pd.DataFrame:
 @pytest.fixture
 def written(final, tmp_path, monkeypatch):
     """Write a real report into tmp_path, figures included."""
-    monkeypatch.setattr(report, "FIGURES_DIR", tmp_path / "figures")
-    monkeypatch.setattr(report, "REPORTS_DIR", tmp_path)
+    figures = tmp_path / "figures"
+    figures.mkdir()
+    monkeypatch.setattr(report, "report_figures_dir", lambda section: figures)
+    monkeypatch.setattr(report, "report_dir", lambda section: tmp_path)
     path = report.write_market_report(final, "TSLA", n_articles=len(final) + 10)
     return path, path.read_text(encoding="utf-8"), tmp_path
 

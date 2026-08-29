@@ -20,7 +20,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from stock_predictor.config import FIGURES_DIR, MARKET_INDEX, REPORTS_DIR
+from stock_predictor.config import MARKET_INDEX, report_dir, report_figures_dir
 from stock_predictor.fetch.report import (
     _md_table,
     burst_check,
@@ -40,8 +40,7 @@ MIN_MONTH_ARTICLES = 100
 
 
 def _figure_path(ticker: str, name: str) -> "object":
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    return FIGURES_DIR / f"{ticker}_market_{name}.png"
+    return report_figures_dir("market") / f"{ticker}_market_{name}.png"
 
 
 def plot_label_balance(final: pd.DataFrame, ticker: str):
@@ -475,7 +474,6 @@ def write_market_report(final: pd.DataFrame, ticker: str, n_articles: int, path=
         "",
     ]
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = path or REPORTS_DIR / f"{ticker}_market_features_report.md"
+    out_path = path or report_dir("market") / f"{ticker}_market_features_report.md"
     out_path.write_text("\n".join(md), encoding="utf-8")
     return out_path

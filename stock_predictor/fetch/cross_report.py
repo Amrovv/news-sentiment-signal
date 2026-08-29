@@ -22,11 +22,16 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # headless: this module writes figures to disk, never shows them
+from loguru import logger
 import matplotlib.pyplot as plt
 import pandas as pd
-from loguru import logger
 
-from stock_predictor.config import FIGURES_DIR, REPORTS_DIR, processed_articles_path, raw_articles_path
+from stock_predictor.config import (
+    processed_articles_path,
+    raw_articles_path,
+    report_dir,
+    report_figures_dir,
+)
 from stock_predictor.fetch.report import _md_table, burst_check
 
 DEFAULT_TICKERS = ["TSLA", "AAPL", "AMZN", "NVDA"]
@@ -70,8 +75,7 @@ def _plot_monthly_comparison(per_ticker_month: dict[str, pd.DataFrame], dataset:
     ax.legend()
     fig.tight_layout()
 
-    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-    fig_path = FIGURES_DIR / f"all_tickers_{dataset}_fetch_monthly.png"
+    fig_path = report_figures_dir("fetch") / f"all_tickers_{dataset}_fetch_monthly.png"
     fig.savefig(fig_path, dpi=120)
     plt.close(fig)
     return fig_path
@@ -88,32 +92,38 @@ def _dataset_section(tickers: list[str], dataset: str) -> list[str]:
     md = [f"## {dataset.capitalize()}\n"]
 
     md.append("### Overview\n")
-    md.append(_md_table(
-        [
-            (
-                t,
-                f"{int(r['daily_counts'].sum()):,}",
-                f"{r['span_start']:%Y-%m-%d} to {r['span_end']:%Y-%m-%d}",
-                f"{r['active_days']} of {r['days_in_span']} ({r['active_day_share']:.1%})",
-                f"{r['longest_gap_days']} days",
-            )
-            for t, r in results.items()
-        ],
-        ["ticker", "articles", "date span", "active days", "longest gap"],
-    ))
+    md.append(
+        _md_table(
+            [
+                (
+                    t,
+                    f"{int(r['daily_counts'].sum()):,}",
+                    f"{r['span_start']:%Y-%m-%d} to {r['span_end']:%Y-%m-%d}",
+                    f"{r['active_days']} of {r['days_in_span']} ({r['active_day_share']:.1%})",
+                    f"{r['longest_gap_days']} days",
+                )
+                for t, r in results.items()
+            ],
+            ["ticker", "articles", "date span", "active days", "longest gap"],
+        )
+    )
 
     fig_path = _plot_monthly_comparison({t: r["per_month"] for t, r in results.items()}, dataset)
-    md.append(f"\n![articles per month by ticker]({fig_path.relative_to(REPORTS_DIR).as_posix()})\n")
+    md.append(f"\n![articles per month by ticker]({'figures/' + fig_path.name})\n")
 
     md.append("\n### Do heavy months line up across tickers?\n")
     peaks = {t: _peak_months(r["per_month"]) for t, r in results.items()}
-    md.append(_md_table(
-        [(t, ", ".join(months)) for t, months in peaks.items()],
-        ["ticker", "top 3 months by article count"],
-    ))
+    md.append(
+        _md_table(
+            [(t, ", ".join(months)) for t, months in peaks.items()],
+            ["ticker", "top 3 months by article count"],
+        )
+    )
     shared = set.intersection(*(set(m) for m in peaks.values())) if peaks else set()
     any_pair_shared = {
-        m for months in peaks.values() for m in months
+        m
+        for months in peaks.values()
+        for m in months
         if sum(m in other for other in peaks.values()) >= 2
     }
     if shared:
@@ -147,8 +157,7 @@ def write_cross_report(tickers: list[str], datasets: list[str], path: Path | Non
     for dataset in datasets:
         md.extend(_dataset_section(tickers, dataset))
 
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = path or REPORTS_DIR / "all_tickers_fetch_report.md"
+    out_path = path or report_dir("fetch") / "all_tickers_fetch_report.md"
     out_path.write_text("\n".join(md), encoding="utf-8")
     return out_path
 
@@ -156,11 +165,15 @@ def write_cross_report(tickers: list[str], datasets: list[str], path: Path | Non
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare fetch patterns across several tickers.")
     parser.add_argument(
-        "tickers", nargs="*", default=DEFAULT_TICKERS,
+        "tickers",
+        nargs="*",
+        default=DEFAULT_TICKERS,
         help=f"Tickers to compare (default: {' '.join(DEFAULT_TICKERS)}).",
     )
     parser.add_argument(
-        "--dataset", choices=["raw", "processed", "both"], default="both",
+        "--dataset",
+        choices=["raw", "processed", "both"],
+        default="both",
         help="Which saved corpus/corpora to compare.",
     )
     args = parser.parse_args()
