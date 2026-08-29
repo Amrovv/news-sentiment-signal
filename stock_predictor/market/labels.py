@@ -44,7 +44,7 @@ from stock_predictor.market.features import (
 # The order the table has always been written in. Identity first, then the two
 # labels and the direction derived from the 1-day one, then the pre-publication
 # features. `article_id` is the join key onto the text layer's table.
-IDENTITY_COLUMNS = ["article_id", "ticker", "timestamp_utc"]
+IDENTITY_COLUMNS = ["article_id", "ticker", "timestamp_utc", "session_open"]
 LABEL_COLUMNS = [f"abnormal_return_{h}d" for h in LABEL_HORIZONS_DAYS] + ["label_direction"]
 FEATURE_COLUMNS = [f"momentum_{d}d" for d in MOMENTUM_LOOKBACKS] + [
     f"volatility_{VOLATILITY_WINDOW}d",
@@ -57,6 +57,11 @@ FEATURE_COLUMNS = [f"momentum_{d}d" for d in MOMENTUM_LOOKBACKS] + [
 ]
 
 FEATURE_DESCRIPTIONS = {
+    "session_open": (
+        "The market session this row is labelled against: the first open strictly after publication. "
+        "Every row sharing it shares a label and every market feature, so it is the unit a fold may "
+        "not divide."
+    ),
     "abnormal_return_1d": (
         "Target return minus benchmark return over the session at or after publication. "
         "The label. Deliberately forward-looking, the only column here that is."
@@ -311,6 +316,12 @@ def build_market_features(
     # article's own day: an article published on an evening and one published
     # the next morning before the bell share a session, and so share a label.
     aligned = align_sessions(out["timestamp_utc"], schedule)
+    # Kept as a column, not just used and discarded. It is the unit every row
+    # sharing a label belongs to, so the evaluation harness groups folds on it:
+    # evaluate() reads it by name and refuses to run without it. Deriving it
+    # downstream would mean every consumer reloading the trading calendar to
+    # recompute something this function already knows.
+    out["session_open"] = aligned
     for horizon in LABEL_HORIZONS_DAYS:
         out[f"abnormal_return_{horizon}d"] = _map_by_date(
             aligned,

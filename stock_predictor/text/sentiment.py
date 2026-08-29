@@ -366,6 +366,7 @@ def aggregate_article_features(
                 "n_entity_sents",
                 "n_boilerplate_sents",
                 "n_ceo_sents",
+                "n_ceo_mention_sents",
                 "n_total_sents",
                 "entity_share",
                 "article_length",
@@ -440,11 +441,19 @@ def aggregate_article_features(
         # CEO-only sentences -- a subset of the mentions_ceo rows needs_score()
         # keeps, so it is covered by the predicate.
         ceo_only = group[grp_consumed & group["mentions_ceo"] & ~group["mentions_target"]]
+        # Every CEO sentence, including those that also name the company. This is
+        # the population fus_ceo_mean averages over, and it is what
+        # has_ceo_mention reports. Roughly half of all CEO sentences name the
+        # company in the same breath ("Musk said Tesla would..."), so the
+        # CEO-only count above answers a narrower question than "does this
+        # article discuss the CEO" and cannot stand in for it.
+        ceo_any = group[grp_consumed & group["mentions_ceo"]]
 
         n_entity = len(target)
         n_total = len(body)
         n_boilerplate = int(group["is_boilerplate"].sum())
         n_ceo = len(ceo_only)
+        n_ceo_mention = len(ceo_any)
 
         if n_entity > 0:
             sent_entity_pos = target["pos"].mean()
@@ -495,6 +504,7 @@ def aggregate_article_features(
                 "n_entity_sents": n_entity,
                 "n_boilerplate_sents": n_boilerplate,
                 "n_ceo_sents": n_ceo,
+                "n_ceo_mention_sents": n_ceo_mention,
                 "n_total_sents": n_total,
                 "entity_share": (n_entity / n_total) if n_total > 0 else 0,
                 "article_length": group["char_len"].sum(),
@@ -608,6 +618,7 @@ def analyze(
         row["n_entity_sents"] = 0
         row["n_boilerplate_sents"] = 0
         row["n_ceo_sents"] = 0
+        row["n_ceo_mention_sents"] = 0
         row["n_total_sents"] = 0
         row["entity_share"] = 0
         row["article_length"] = 0
@@ -615,7 +626,7 @@ def analyze(
         return row
 
     result = features_df.iloc[0].to_dict()
-    result["has_ceo_mention"] = result["n_ceo_sents"] > 0
+    result["has_ceo_mention"] = result["n_ceo_mention_sents"] > 0
     return result
 
 
@@ -625,6 +636,7 @@ SHAPE_FEATURE_COLUMNS = [
     "n_total_sents",
     "n_entity_sents",
     "n_ceo_sents",
+    "n_ceo_mention_sents",
     "n_boilerplate_sents",
     "entity_share",
     "article_length",
@@ -653,6 +665,7 @@ FEATURE_DESCRIPTIONS = {
     "n_total_sents": "Sentences in the article after splitting, excluding scraper residue.",
     "n_entity_sents": "Sentences tagged as being about the target, non-boilerplate.",
     "n_ceo_sents": "Sentences mentioning the CEO but not the target itself.",
+    "n_ceo_mention_sents": "Sentences mentioning the CEO, whether or not they also name the target. The population fus_ceo_mean averages over.",
     "n_boilerplate_sents": "Sentences whose exact text repeats across five or more articles.",
     "entity_share": "n_entity_sents over the article's non-boilerplate sentence count.",
     "article_length": "Characters in the article as published, boilerplate included.",
@@ -663,7 +676,7 @@ FEATURE_DESCRIPTIONS = {
     "fus_conf_graft_floor_top3_neg": "Mean of the three lowest sentence scores.",
     "fus_conf_graft_floor_spread": "top3_pos minus top3_neg. Separates a contested article from a quiet one, which the mean cannot.",
     "fus_ceo_mean": "Mean fused score over CEO-only sentences. NaN where the article has none.",
-    "has_ceo_mention": "Whether the article has any CEO-only sentence (n_ceo_sents > 0). Robust to the headline-only 0-fill, unlike fus_ceo_mean.notna().",
+    "has_ceo_mention": "Whether the article has any sentence about the CEO (n_ceo_mention_sents > 0). Not n_ceo_sents, which counts only CEO sentences that do not also name the target and so misses about a third of the articles that discuss the CEO. Robust to the headline-only 0-fill, unlike fus_ceo_mean.notna().",
     "fus_headline": "The headline through both scorers, grafted. One string, one number.",
     "fus_maxmag": "Signed score of the single loudest target sentence, chosen by largest absolute fused score.",
     "fus_trusted_mean": "Mean fused score over the surface and coref_span channels only, excluding the weakest-measured channel.",
@@ -746,7 +759,7 @@ def build_model_features(
         out["fus_trusted_mean"], out["n_trusted_sents"], fusion.SHRINKAGE_K_TRUSTED
     )
 
-    out["has_ceo_mention"] = out["n_ceo_sents"] > 0
+    out["has_ceo_mention"] = out["n_ceo_mention_sents"] > 0
 
     # Derived last, so they read the shrunk, filled body mean rather than the
     # raw NaN it replaced. On a headline-only article the body mean is 0.0, so
