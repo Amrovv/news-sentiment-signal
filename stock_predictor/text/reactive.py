@@ -1,10 +1,11 @@
-import re
 from dataclasses import dataclass
-from stock_predictor.config import INTERIM_DATA_DIR
+import re
 
 import pandas as pd
 
-#Verbs which indicate price movement discussion
+from stock_predictor.config import INTERIM_DATA_DIR
+
+# Verbs which indicate price movement discussion
 MOVE_VERBS = (
     r"(rises?|falls?|slides?|slips?|surges?|jumps?|climbs?|tumbles?|sinks?|dips?|sank|sunk|"
     r"gains?|drops?|plunges?|soars?|rallies?|retreats?|declines?|advances?|"
@@ -12,7 +13,7 @@ MOVE_VERBS = (
     r"gained|dropped|plunged|soared|rallied|retreated|declined|advanced)"
 )
 
-#Strong: near-certain price-commentary signals
+# Strong: near-certain price-commentary signals
 STRONG_PATTERNS = [
     rf"\bshares?\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
     rf"\bstock\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
@@ -24,7 +25,7 @@ STRONG_PATTERNS = [
     r"\b(52|fifty-two)[- ]week\s+(high|low)\b",
 ]
 
-#Weak: suggestive but common in analysis pieces too
+# Weak: suggestive but common in analysis pieces too
 WEAK_PATTERNS = [
     r"\b(rally|selloff|sell-off|slump|surge|plunge)\b",
     r"\bhere'?s\s+why\b",
@@ -39,11 +40,12 @@ WEAK_PATTERNS = [
 _STRONG = [re.compile(p, re.IGNORECASE) for p in STRONG_PATTERNS]
 _WEAK = [re.compile(p, re.IGNORECASE) for p in WEAK_PATTERNS]
 
+
 @dataclass
 class ReactiveResult:
-    is_reactive: int          #0/1 reactive flag
-    score: float              #Score based on the hits
-    hits: list[str]           #Which patterns fired (for debugging/tuning)
+    is_reactive: int  # 0/1 reactive flag
+    score: float  # Score based on the hits
+    hits: list[str]  # Which patterns fired (for debugging/tuning)
 
 
 def check_hits(text: str, patterns) -> list[str]:
@@ -59,8 +61,9 @@ def check_hits(text: str, patterns) -> list[str]:
     return [p.search(text).group() for p in patterns if p.search(text)]
 
 
-def classify_reactive(headline: str, summary: str = "", article: str="", 
-                      threshold: float = 1.0) -> ReactiveResult:
+def classify_reactive(
+    headline: str, summary: str = "", article: str = "", threshold: float = 1.0
+) -> ReactiveResult:
     """
     Classify a whole article.
 
@@ -69,7 +72,7 @@ def classify_reactive(headline: str, summary: str = "", article: str="",
              article strong=0.2, article weak=0.1,
     Default threshold: 1.0 -> a single strong headline hit is enough.
     """
-    #Pull hits
+    # Pull hits
     h_strong = check_hits(headline, _STRONG)
     h_weak = check_hits(headline, _WEAK)
     s_strong = check_hits(summary, _STRONG)
@@ -77,7 +80,7 @@ def classify_reactive(headline: str, summary: str = "", article: str="",
     a_strong = check_hits(article, _STRONG)
     a_weak = check_hits(article, _WEAK)
 
-    #Score the hits accordingly
+    # Score the hits accordingly
     score = (
         1.00 * len(h_strong)
         + 0.50 * len(h_weak)
@@ -87,8 +90,8 @@ def classify_reactive(headline: str, summary: str = "", article: str="",
         + 0.10 * len(a_weak)
     )
 
-    #H = headline, S = summary, A = article
-    #! = strong, ? = weak
+    # H = headline, S = summary, A = article
+    # ! = strong, ? = weak
     matched = (
         [f"H! {p}" for p in h_strong]
         + [f"H? {p}" for p in h_weak]
@@ -100,9 +103,12 @@ def classify_reactive(headline: str, summary: str = "", article: str="",
     return ReactiveResult(int(score >= threshold), score, matched)
 
 
-def threshold_analysis(labelled_path: str, sample_df: pd.DataFrame,
-                      thresholds: list[float] | None = None,
-                      article_column: str = "article") -> pd.DataFrame:
+def threshold_analysis(
+    labelled_path: str,
+    sample_df: pd.DataFrame,
+    thresholds: list[float] | None = None,
+    article_column: str = "article",
+) -> pd.DataFrame:
     """
     Run evaluate_sample() across a threshold grid and return the resulting metrics.
     """
@@ -117,24 +123,25 @@ def threshold_analysis(labelled_path: str, sample_df: pd.DataFrame,
             threshold=thresh,
             article_column=article_column,
         )
-        rows.append({
-            "threshold": thresh,
-            "agreement": metrics["agreement"],
-            "precision": metrics["precision"],
-            "recall": metrics["recall"],
-            "base_rate_pred": metrics["base_rate_pred"],
-            "base_rate_true": metrics["base_rate_true"],
-            "tp": metrics["confusion"]["tp"],
-            "fp": metrics["confusion"]["fp"],
-            "fn": metrics["confusion"]["fn"],
-            "tn": metrics["confusion"]["tn"],
-        })
+        rows.append(
+            {
+                "threshold": thresh,
+                "agreement": metrics["agreement"],
+                "precision": metrics["precision"],
+                "recall": metrics["recall"],
+                "base_rate_pred": metrics["base_rate_pred"],
+                "base_rate_true": metrics["base_rate_true"],
+                "tp": metrics["confusion"]["tp"],
+                "fp": metrics["confusion"]["fp"],
+                "fn": metrics["confusion"]["fn"],
+                "tn": metrics["confusion"]["tn"],
+            }
+        )
 
     return pd.DataFrame(rows)
 
 
-def make_labelling_sample(article_df: pd.DataFrame, seed: int, 
-                          n: int = 100):
+def make_labelling_sample(article_df: pd.DataFrame, seed: int, n: int = 100):
     """
     Draw a random sample and write a CSV with a blank `true_label` column.
     Fill it in by hand (1 = reactive, 0 = not), then feed it to evaluate_sample().
@@ -155,14 +162,19 @@ def make_labelling_sample(article_df: pd.DataFrame, seed: int,
     return sample
 
 
-def evaluate_sample(labelled_path: str, sample_df: pd.DataFrame, threshold: float = 1.0,
-                    article_column: str = "article") -> dict:
+def evaluate_sample(
+    labelled_path: str,
+    sample_df: pd.DataFrame,
+    threshold: float = 1.0,
+    article_column: str = "article",
+) -> dict:
     """
     Evaluate the hand labelled articles against our algorithm.
     """
     labelled_sample = pd.read_csv(labelled_path)
-    labelled_sample = labelled_sample[labelled_sample["hand_label"].notna() & 
-                                      (labelled_sample["hand_label"] != "")]
+    labelled_sample = labelled_sample[
+        labelled_sample["hand_label"].notna() & (labelled_sample["hand_label"] != "")
+    ]
     labelled_sample["hand_label"] = labelled_sample["hand_label"].astype(int)
 
     def _article_text(r):
@@ -176,7 +188,9 @@ def evaluate_sample(labelled_path: str, sample_df: pd.DataFrame, threshold: floa
 
     def _classify_row(r):
         """Classify the full sample row by row"""
-        res = classify_reactive(r.get("headline", ""), r.get("summary", ""), _article_text(r), threshold=threshold)
+        res = classify_reactive(
+            r.get("headline", ""), r.get("summary", ""), _article_text(r), threshold=threshold
+        )
         return pd.Series({"is_reactive": res.is_reactive, "score": res.score})
 
     pred = sample_df.copy()
@@ -186,7 +200,9 @@ def evaluate_sample(labelled_path: str, sample_df: pd.DataFrame, threshold: floa
         pred["is_reactive"] = pd.Series(dtype=int)
         pred["score"] = pd.Series(dtype=float)
 
-    keep_cols = [c for c in ["article_id", "headline", "summary", article_column] if c in pred.columns]
+    keep_cols = [
+        c for c in ["article_id", "headline", "summary", article_column] if c in pred.columns
+    ]
     pred_for_merge = pred[keep_cols + ["is_reactive", "score"]]
     merged = labelled_sample.merge(pred_for_merge, on="article_id", how="left")
 

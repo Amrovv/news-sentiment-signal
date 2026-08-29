@@ -229,11 +229,15 @@ def write_merge_report(
             "against the stored column:"
         ),
         "",
-        "- **leaky**: anchored to the article's own trading day, using a close that had not "
-        "happened yet for any pre-market or market-hours article. This was a real bug; "
-        "`reports/findings/momentum_1d-leakage-finding.md` documents it.",
-        "- **correct**: anchored to the day before, which is what `cumulative_return`'s "
-        "`ref_date.normalize()` cutoff produces.",
+        (
+            "- **leaky**: anchored to the article's own trading day, using a close that had not "
+            "happened yet for any pre-market or market-hours article. This was a real bug; "
+            "`reports/findings/momentum_1d-leakage-finding.md` documents it."
+        ),
+        (
+            "- **correct**: anchored to the day before, which is what `cumulative_return`'s "
+            "`ref_date.normalize()` cutoff produces."
+        ),
         "",
         _md_table(
             [
