@@ -2,7 +2,7 @@
 
 One row per article: the label a model is trained against, and the market state as it stood at publication. Produced by `stock_predictor.market.run_pipeline`, which writes the table itself to `data/processed/market_run/NVDA/`. Joins the text layer's `article_features.parquet` on `article_id`.
 
-**Rows:** 17,294 | **Columns:** 15 | **Span:** 2025-09-01 to 2026-08-01 | **Benchmark:** SPY
+**Rows:** 17,294 | **Columns:** 16 | **Span:** 2025-09-01 to 2026-08-01 | **Benchmark:** SPY
 
 ## The label
 

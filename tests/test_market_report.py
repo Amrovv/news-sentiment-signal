@@ -33,6 +33,9 @@ def final() -> pd.DataFrame:
             "article_id": [f"a{i}" for i in range(n)],
             "ticker": "TSLA",
             "timestamp_utc": ts,
+            # No market calendar behind synthetic data; the normalised day stands
+            # in for the session the row is labelled against.
+            "session_open": ts.normalize(),
             "abnormal_return_1d": returns,
             "label_direction": np.sign(returns).astype(int),
             "session": rng.choice(["pre-market", "market-hours", "after-hours"], n),

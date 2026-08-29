@@ -4,7 +4,7 @@ The two pipelines meet here. This report covers the join of `article_features.pa
 
 All checks passed.
 
-**Merged rows:** 7,041 | **Columns:** 36 | **Span:** 2025-09-01 to 2026-08-01
+**Merged rows:** 7,041 | **Columns:** 37 | **Span:** 2025-09-01 to 2026-08-01
 
 ## 1. Did the key hold?
 

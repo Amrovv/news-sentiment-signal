@@ -15,21 +15,31 @@ This module keeps everything about the harness that 3.2 did *not* implicate --
 significance, `fit_final_model()`, `feature_importance()` -- imported directly from
 `evaluate.py` rather than copied, and makes the two changes 3.2 section 6.2
 recommended together: `day_grouped_splits` is replaced by `row_grouped_splits`, which
-sizes each fold by *row count* instead of day count, snapped to day boundaries so a day
-is still never divided between train and test (that guarantee wasn't the problem; 3.2's
-finding was that a fixed *number* of days is the wrong proxy for a fixed *amount* of
-data); and `weighted_aggregate()` is added alongside `EvalResult.aggregate`, so a
+sizes each fold by *row count* instead of day count, snapped to group boundaries so a
+group is still never divided between train and test (that guarantee wasn't the problem;
+3.2's finding was that a fixed *number* of days is the wrong proxy for a fixed *amount*
+of data); and `weighted_aggregate()` is added alongside `EvalResult.aggregate`, so a
 176-row fold and a 529-row fold don't count equally toward the mean just because each
 counts as "one fold." Row-count splitting mostly addresses what the weighting gap was
 covering for -- once folds are close to equal size, weighted and unweighted means
 should nearly agree -- but "mostly" and "exactly" aren't the same claim, and
 `weighted_aggregate()` exists to let that be checked rather than assumed.
 
+`notebooks/modelling/3.5` then found the group itself was wrong. The guarantee was
+stated over the calendar day, while a row's label comes from the market session it
+anchors to, and sessions straddle calendar days: an article after Friday's close and one
+before Monday's open share a session, a label, and every market feature, three days
+apart. Day-grouped folds split those across the boundary on 2 to 4% of rows, which is
+the leak the grouping exists to prevent. `row_grouped_splits` now takes the session
+directly and cuts to the nearest group boundary rather than the first one past it, which
+is what keeps folds even once the groups are session-sized.
+
 This is a separate file rather than an edit to `evaluate.py` so both eras of the
 harness stay independently readable: `evaluate.py`'s docstring and `notebooks/
 modelling/3.1` still describe and validate exactly the day-grouped harness that
-`notebooks/modelling/3.2` actually ran through, and this module documents what changed
-and why, rather than silently rewriting history underneath an already-run notebook.
+`notebooks/modelling/3.2` actually ran through. The notebooks are stored artifacts with
+their outputs saved, so this module documents what the harness does now rather than
+carrying arguments to reproduce what it used to.
 """
 
 import numpy as np
@@ -45,6 +55,9 @@ from stock_predictor.market.evaluate import (
     fit_final_model,
 )
 
+# The column evaluate() reads each row's market session from.
+DEFAULT_GROUP_COL = "session_open"
+
 __all__ = [
     "evaluate",
     "feature_importance",
@@ -54,28 +67,45 @@ __all__ = [
 ]
 
 
-def row_grouped_splits(dates: pd.Series, n_splits: int = 5):
+def row_grouped_splits(groups: pd.Series, n_splits: int = 5):
     """Yield (train_mask, test_mask) row-level boolean arrays per walk-forward fold,
-    each fold's test window sized by row count rather than day count.
+    each fold's test window sized by row count rather than group count.
 
-    Unique calendar days are laid out in chronological order and cut into
-    `n_splits + 1` contiguous chunks so that each chunk's row count is as close to
-    `len(dates) / (n_splits + 1)` as the day boundaries allow -- a cut point is placed
-    at the day boundary nearest each target row count, never inside a day, so (like
-    `day_grouped_splits`) no day is ever split between train and test. Fold `k`'s
-    train set is chunks `1..k` combined (the expanding window); its test set is chunk
-    `k + 1` alone. This mirrors what `TimeSeriesSplit` does for individual rows, just
-    applied to day-sized blocks sized by the rows inside them instead of by count of
-    days.
+    `groups` is the unit no fold may divide, one value per row, and it should be the
+    aligned market session (`market.labels.align_sessions`). The split is grouped at
+    all because rows sharing a label and market features would otherwise be scored
+    against siblings the model trained on, so the right group is whatever shares
+    those values, and that is the session. An article published after Friday's close
+    and one published before Monday's open anchor to the same session and carry an
+    identical label, three calendar days apart. Grouping by calendar day instead,
+    which this function used to do, split those apart and leaked the answer across
+    the boundary on 2 to 4% of rows.
 
-    On a corpus that publishes in uneven bursts (this one: 92 active days out of 351,
-    clustered into ~13 bursts of very different sizes), this is what keeps every
-    fold's test set a comparable amount of data -- the property `day_grouped_splits`
-    was meant to guarantee but, on this corpus, didn't.
+    Unique groups are laid out in chronological order and cut into `n_splits + 1`
+    contiguous chunks so that each chunk's row count is as close to
+    `len(groups) / (n_splits + 1)` as the group boundaries allow. A cut goes to
+    whichever boundary is nearest the target, before or after, never inside a group.
+    Fold `k`'s train set is chunks `1..k` combined (the expanding window); its test
+    set is chunk `k + 1` alone. This mirrors what `TimeSeriesSplit` does for
+    individual rows, just applied to group-sized blocks sized by the rows inside
+    them instead of by count of groups.
+
+    Taking the nearest boundary rather than the first one past the target matters
+    because sessions are fewer and larger than calendar days: always overshooting
+    compounds into uneven folds. It is a heuristic, not a guarantee, since the
+    choice is greedy per cut while fold size is the gap between consecutive cuts, so
+    a locally nearer boundary can leave a globally worse fold. Over random group
+    shapes it wins about two thirds of the time; on all four of this project's
+    corpora it wins.
+
+    On a corpus that publishes in uneven bursts (the original one: 92 active days
+    out of 351, clustered into ~13 bursts of very different sizes), row-count sizing
+    is what keeps every fold's test set a comparable amount of data -- the property
+    `day_grouped_splits` was meant to guarantee but, on that corpus, didn't.
     """
-    days = dates.dt.normalize()
-    day_order = np.sort(days.unique())
-    counts = days.value_counts().reindex(day_order).to_numpy()
+    groups = groups.reset_index(drop=True)
+    group_order = np.sort(groups.unique())
+    counts = groups.value_counts().reindex(group_order).to_numpy()
     cum_counts = np.cumsum(counts)
     total_rows = cum_counts[-1]
 
@@ -86,24 +116,26 @@ def row_grouped_splits(dates: pd.Series, n_splits: int = 5):
     last_cut = -1
     for target in targets:
         idx = int(np.searchsorted(cum_counts, target, side="left"))
+        if idx > 0 and abs(cum_counts[idx - 1] - target) < abs(cum_counts[idx] - target):
+            idx -= 1
         idx = max(idx, last_cut + 1)
-        idx = min(idx, len(day_order) - 2)
+        idx = min(idx, len(group_order) - 2)
         if idx <= last_cut:
             continue
         cut_idx.append(idx)
         last_cut = idx
 
-    chunk_bounds = [-1, *cut_idx, len(day_order) - 1]
+    chunk_bounds = [-1, *cut_idx, len(group_order) - 1]
     chunks = [
-        day_order[chunk_bounds[i] + 1 : chunk_bounds[i + 1] + 1]
+        group_order[chunk_bounds[i] + 1 : chunk_bounds[i + 1] + 1]
         for i in range(len(chunk_bounds) - 1)
     ]
 
     for k in range(1, len(chunks)):
-        train_days = set(np.concatenate(chunks[:k]))
-        test_days = set(chunks[k])
-        train_mask = days.isin(train_days).to_numpy()
-        test_mask = days.isin(test_days).to_numpy()
+        train_groups = set(np.concatenate(chunks[:k]))
+        test_groups = set(chunks[k])
+        train_mask = groups.isin(train_groups).to_numpy()
+        test_mask = groups.isin(test_groups).to_numpy()
         yield train_mask, test_mask
 
 
@@ -114,20 +146,29 @@ def evaluate(
     label_col: str = DEFAULT_TARGET_COL,
     n_splits: int = 5,
     date_col: str = DEFAULT_DATE_COL,
+    group_col: str = DEFAULT_GROUP_COL,
 ) -> EvalResult:
     """`evaluate.evaluate()`, with folds sized by row count instead of day count --
     see `row_grouped_splits` and this module's docstring for why. Same contract,
     same `EvalResult`/`FoldResult` shapes, same metrics; only which rows land in
     which fold changes.
+
+    `group_col` names the column holding the unit no fold may divide: the aligned
+    market session, which `market.labels.align_sessions` produces.
     """
     data = data.sort_values(date_col).reset_index(drop=True)
     X_all = data[feature_cols]
     y_all = data[label_col]
     dates = data[date_col]
+    if group_col not in data.columns:
+        raise ValueError(
+            f"evaluate() needs a {group_col!r} column holding each row's market session; "
+            f"build it with market.labels.align_sessions(data[{date_col!r}], schedule)"
+        )
 
     folds = []
     for fold_num, (train_mask, test_mask) in enumerate(
-        row_grouped_splits(dates, n_splits=n_splits), start=1
+        row_grouped_splits(data[group_col], n_splits=n_splits), start=1
     ):
         train_idx = np.flatnonzero(train_mask)
         test_idx = np.flatnonzero(test_mask)
