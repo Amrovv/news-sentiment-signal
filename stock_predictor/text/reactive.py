@@ -9,17 +9,20 @@ from stock_predictor.config import INTERIM_DATA_DIR
 MOVE_VERBS = (
     r"(rises?|falls?|slides?|slips?|surges?|jumps?|climbs?|tumbles?|sinks?|dips?|sank|sunk|"
     r"gains?|drops?|plunges?|soars?|rallies?|retreats?|declines?|advances?|"
+    r"rebounds?|bounces?|rockets?|spikes?|"
     r"rose|fell|slid|slipped|surged|jumped|climbed|tumbled|sank|"
-    r"gained|dropped|plunged|soared|rallied|retreated|declined|advanced)"
+    r"gained|dropped|plunged|soared|rallied|retreated|declined|advanced|"
+    r"rebounded|bounced|rocketed|spiked)"
 )
 
 # Strong: near-certain price-commentary signals
 STRONG_PATTERNS = [
-    rf"\bshares?\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
-    rf"\bstock\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
-    r"\bstock\s+(closed|opened|traded|finished)\b",
+    # (?<!market\s) excludes "market share(s)", a business metric, not a price move.
+    rf"(?<!market\s)\bshares?\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
+    rf"\bstocks?\s+(?:\w+\s+){{0,2}}{MOVE_VERBS}",
+    r"\bstocks?\s+(closed|opened|traded|finished)\b",
     r"\b(up|down|off)\s+\d+(\.\d+)?\s*%",
-    r"\b\d+(\.\d+)?\s*%\s+(higher|lower|gain|loss|drop|jump)",
+    r"\b\d+(\.\d+)?\s*%\s+(higher|lower|gain|loss|drop|jump|surge|rally|slide|tumble|plunge|rebound)\b",
     r"\bextend(s|ed|ing)?\s+(gains|losses|slide|rally)\b",
     r"\bhit(s|ting)?\s+(a\s+)?(new\s+)?(record|all-time)\s+(high|low)\b",
     r"\b(52|fifty-two)[- ]week\s+(high|low)\b",
@@ -27,14 +30,19 @@ STRONG_PATTERNS = [
 
 # Weak: suggestive but common in analysis pieces too
 WEAK_PATTERNS = [
-    r"\b(rally|selloff|sell-off|slump|surge|plunge)\b",
+    r"\b(rally|selloff|sell-off|slump|surge|plunge|rout|rebound)\b",
     r"\bhere'?s\s+why\b",
     r"\binvestors?\s+(weighed|reacted|shrugged|cheered|punished)\b",
-    r"\b(outperform|underperform)(ed|ing)?\s+the\s+(market|s&p|nasdaq)\b",
+    # Dropped the "the market/s&p/nasdaq" requirement: "outperformed" alone is
+    # already common-in-analysis-pieces territory, the weak tier's own bar.
+    r"\b(outperform|underperform)(ed|ing)?\b",
     r"\b(premarket|pre-market|after[- ]hours)\s+(trading|movers?)\b",
     r"\bmoving\s+(the\s+)?(market|stock)s?\b",
     r"\b(top|biggest)\s+(gainers?|losers?|movers?)\b",
     r"\bwhat'?s\s+(driving|behind)\b",
+    # A direction with no magnitude ("stock is up") is weaker evidence than a
+    # percentage, so it stays out of STRONG_PATTERNS.
+    r"\b(shares?|stocks?)\s+(?:is|are|was|were)\s+(up|down)\b",
 ]
 
 _STRONG = [re.compile(p, re.IGNORECASE) for p in STRONG_PATTERNS]
@@ -101,6 +109,135 @@ def classify_reactive(
         + [f"A? {p}" for p in a_weak]
     )
     return ReactiveResult(int(score >= threshold), score, matched)
+
+
+def classify_reactive_sentence(text: str, threshold: float = 1.0) -> ReactiveResult:
+    """
+    Classify a single sentence.
+
+    A sentence carries no headline/summary/article tiering, so both pattern
+    sets are weighted at the headline tier (strong=1.0, weak=0.5) -- a single
+    strong hit is a direct price-move claim regardless of where in the
+    article the sentence sits.
+    """
+    strong = check_hits(text, _STRONG)
+    weak = check_hits(text, _WEAK)
+    score = 1.00 * len(strong) + 0.50 * len(weak)
+    matched = [f"! {p}" for p in strong] + [f"? {p}" for p in weak]
+    return ReactiveResult(int(score >= threshold), score, matched)
+
+
+def tag_reactive_sentences(sentences_df: pd.DataFrame, threshold: float = 1.0) -> pd.DataFrame:
+    """
+    Tag each row of a sentence table (entity_filter.SENTENCE_COLUMNS schema)
+    with reactivity score/flag. Tagging only -- mirrors entity_filter's own
+    "does not filter sentences out" convention, so downstream aggregation
+    decides what to do with boilerplate/irrelevant rows.
+    """
+    out = sentences_df.copy()
+    if len(out):
+        results = out["text"].apply(lambda t: classify_reactive_sentence(t, threshold=threshold))
+        out["is_reactive"] = [r.is_reactive for r in results]
+        out["reactive_score"] = [r.score for r in results]
+        out["reactive_hits"] = [r.hits for r in results]
+    else:
+        out["is_reactive"] = pd.Series(dtype=int)
+        out["reactive_score"] = pd.Series(dtype=float)
+        out["reactive_hits"] = pd.Series(dtype=object)
+    return out
+
+
+def aggregate_reactive_features(
+    sentences_df: pd.DataFrame, headlines_df: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """
+    Article-level reactivity aggregates from a sentence table already tagged by
+    tag_reactive_sentences() (must carry is_reactive/reactive_score).
+
+    Aggregated over the same target population sentiment.aggregate_article_features()
+    scores over -- mentions_target, non-boilerplate -- not every sentence in the
+    article. A reactive sentence about a different company mentioned in passing
+    ("Meanwhile, Ford's shares surged 8%...") should not count toward this article's
+    own reactivity, and restricting to target sentences is what keeps it out; a
+    genuinely target-referring sentence resolved only through coreference
+    ("The company's stock fell 5%...") is still included, since entity_filter's coref
+    resolution already sets mentions_target=True for it.
+
+    Headline reactivity is kept as its own column rather than blended into the body
+    mean at a hand-picked weight. This project's fusion layer already treats headline
+    and body evidence as separate features a downstream model weighs itself
+    (fus_headline vs. fus_conf_graft_floor_mean, kept apart precisely so a tree model
+    can learn its own split rather than have one weighting baked in ahead of time) --
+    there is no reason for reactivity to be the one feature family that pre-decides
+    that trade-off instead of learning it the same way.
+
+    n_reactive_sents is always a real count, 0 on an empty target population, the same
+    convention n_entity_sents uses. reactive_share/mean/max are NaN on an empty target
+    population, the same convention sent_entity_pos/neg/neu use -- "no target sentences"
+    and "target sentences, none reactive" are different claims, and only the second one
+    is a real 0.
+    """
+    required = {"is_reactive", "reactive_score"}
+    missing = required - set(sentences_df.columns)
+    if missing:
+        raise ValueError(
+            f"aggregate_reactive_features: sentences_df is missing {sorted(missing)}; "
+            "run tag_reactive_sentences() first."
+        )
+    if "mentions_target" not in sentences_df.columns:
+        raise ValueError("aggregate_reactive_features: sentences_df has no mentions_target column")
+
+    if len(sentences_df) == 0:
+        out = pd.DataFrame(
+            columns=["article_id", "n_reactive_sents", "reactive_share", "reactive_mean", "reactive_max"]
+        )
+    else:
+        df = sentences_df.copy().reset_index(drop=True)
+        df["mentions_target"] = df["mentions_target"].fillna(False).astype(bool)
+        if "is_boilerplate" in df.columns:
+            df["is_boilerplate"] = df["is_boilerplate"].fillna(False).astype(bool)
+        else:
+            df["is_boilerplate"] = False
+
+        rows = []
+        for article_id, group in df.groupby("article_id", sort=False):
+            target = group[group["mentions_target"] & ~group["is_boilerplate"]]
+            n_target = len(target)
+            if n_target > 0:
+                n_reactive = int(target["is_reactive"].sum())
+                rows.append(
+                    {
+                        "article_id": article_id,
+                        "n_reactive_sents": n_reactive,
+                        "reactive_share": n_reactive / n_target,
+                        "reactive_mean": target["reactive_score"].mean(),
+                        "reactive_max": target["reactive_score"].max(),
+                    }
+                )
+            else:
+                rows.append(
+                    {
+                        "article_id": article_id,
+                        "n_reactive_sents": 0,
+                        "reactive_share": float("nan"),
+                        "reactive_mean": float("nan"),
+                        "reactive_max": float("nan"),
+                    }
+                )
+        out = pd.DataFrame(rows)
+
+    if headlines_df is not None:
+        headline_reactive = headlines_df[["article_id", "headline"]].copy()
+        headline_reactive["reactive_headline"] = headline_reactive["headline"].apply(
+            lambda h: classify_reactive_sentence(h if isinstance(h, str) else "").score
+        )
+        out = out.merge(
+            headline_reactive[["article_id", "reactive_headline"]], on="article_id", how="left"
+        )
+    else:
+        out["reactive_headline"] = float("nan")
+
+    return out
 
 
 def threshold_analysis(
