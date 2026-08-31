@@ -1,17 +1,16 @@
 """One article table in, one market feature row per article out.
 
-The assembly step the market layer never had as a module: it lived only in
-notebooks/market/1.4, hardcoded to TSLA. Every feature and the label itself come
-from `market.features`, which is already ticker-agnostic; this adds the loop
-around them, the column order, and the ticker parameter.
+Every feature and the label itself come from `market.features`, which is already
+ticker-agnostic; this adds the loop around them, the column order, and the ticker
+parameter. Originally in notebooks/market/1.4, hardcoded to TSLA.
 
-Two things are computed here rather than row by row, because the corpora are now
-7k-17k articles rather than 2k:
+Two things are computed here rather than row by row, since corpora run 7k-17k
+articles:
 
   * every feature anchored to the article's calendar day is evaluated once per
     unique day and mapped back. `market.features` normalises `ref_date` before
     slicing history, precisely so a same-day close cannot leak in, which means
-    two articles published on the same day cannot differ. The repeat work is
+    two articles published on the same day cannot differ; the repeat work is
     redundant by construction, not an approximation.
   * `align_timestamp` and `session_for` are vectorised via searchsorted.
     `market.features` stays the definition of both; tests/test_market_labels.py

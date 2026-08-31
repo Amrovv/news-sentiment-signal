@@ -1,16 +1,16 @@
 """Pre-publication market features for a single article timestamp.
 
-Every function here answers "what would this feature have looked like at the moment the
-article was published" -- so each one must only look at data strictly *before* the
-article's own trading day. Daily OHLCV bars are indexed at midnight but represent that
-day's close, which isn't known until the market closes; comparing a lookback window
-against the raw publication timestamp (rather than its calendar day) would let that day's
-own close leak in as "prior" data for any article published after midnight, which is
-nearly always. Every cutoff below is therefore taken against `ref_date.normalize()`, not
-`ref_date` itself.
+Every function here answers "what would this feature have looked like at the moment
+the article was published", so each one must only look at data strictly *before* the
+article's own trading day. Daily OHLCV bars are indexed at midnight but represent
+that day's close, which isn't known until the market closes; comparing a lookback
+window against the raw publication timestamp (rather than its calendar day) would
+let that day's own close leak in as "prior" data for any article published after
+midnight, which is nearly always. Every cutoff below is therefore taken against
+`ref_date.normalize()`, not `ref_date` itself.
 
-Tested in tests/test_market_features.py, including a same-day-leakage regression test per
-function.
+Tested in tests/test_market_features.py, including a same-day-leakage regression
+test per function.
 """
 
 import numpy as np

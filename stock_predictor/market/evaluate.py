@@ -2,53 +2,36 @@
 
 Three key points:
 
-1. **Splitting.** Walk-forward CV isn't one train/test split, it's several -- each fold
-   retrains on a larger expanding window and tests on the block right after it. Fitting
-   and splitting are inseparable here, so both live in `evaluate()` rather than being left
-   for each model script to reimplement (and potentially get subtly wrong: a random
-   shuffle leaks the future, and a plain row-level split can divide rows that share an
-   answer between train and test -- see `row_grouped_splits`).
-2. **What is kept whole.** Rows sharing a label and market features must not be split
-   across a fold boundary, or a model is scored on rows whose answer sibling rows already
-   told it. That group is the market session, which is what `row_grouped_splits` takes.
-   Earlier versions of this module grouped by calendar day, a proxy that
-   `notebooks/modelling/3.5` showed cuts across sessions in one direction and merges them
-   in the other.
-3. **What "beats the baseline" means.** A model that's a hair better than always guessing
-   the majority class on a 200-row fold isn't necessarily better at all -- it could be
-   noise. `evaluate()` reports a paired significance test (McNemar's) against the
-   baseline, not just a boolean accuracy comparison.
+1. **Splitting.** Walk-forward CV is several train/test splits, each fold retraining
+   on a larger expanding window and testing on the block right after it. Fitting and
+   splitting live together in `evaluate()` rather than being left for each model
+   script to reimplement and potentially get subtly wrong (a random shuffle leaks
+   the future, a plain row-level split can divide rows sharing an answer between
+   train and test; see `row_grouped_splits`).
+2. **What is kept whole.** Rows sharing a label and market features must not be
+   split across a fold boundary, or a model is scored on rows whose answer sibling
+   rows already told it. That group is the market session, which is what
+   `row_grouped_splits` groups on (grouping by calendar day instead cuts across
+   sessions one way and merges them the other).
+3. **What "beats the baseline" means.** A model a hair better than the majority
+   class on a 200-row fold may just be noise, so `evaluate()` reports a paired
+   significance test (McNemar's), not just an accuracy comparison.
 
-The flow this module is built for:
+Flow: define model_factory (a zero-arg callable returning a fresh, unfitted model
+each call, so a walk-forward pass gets a genuinely fresh model per fold and any
+callable works, not just an sklearn BaseEstimator); run evaluate() across
+walk-forward folds to get an EvalResult holding every fold's model, predictions,
+indices and metrics (weighted_aggregate() weights that summary by test size);
+tune by calling evaluate() repeatedly with different model_factory variants and
+comparing EvalResult.aggregate (evaluate() itself never tunes); finally
+fit_final_model() refits once on every row of `data`, no split at all, for the
+artifact that ships.
 
-    1. Define model_factory -- a zero-argument callable returning a fresh, unfitted
-       model each time it's called (e.g. `lambda: lgb.LGBMClassifier(**params)`). A
-       factory rather than a fitted instance, because a walk-forward evaluation needs
-       a genuinely fresh model per fold, and because a factory works for any model type
-       -- a plain callable has no requirement to be an sklearn BaseEstimator the way
-       sklearn.base.clone() would, so this also covers something like a FinBERT
-       fine-tune that evaluate() otherwise has no opinion about.
-    2. evaluate(model_factory, data, feature_cols, ...) across walk-forward folds ->
-       an EvalResult holding every fold's model, predictions, indices, and metrics,
-       plus the aggregate across folds. `weighted_aggregate()` is the same summary with
-       each fold weighted by how much test data it held.
-    3. Tuning wraps around evaluate() as an outer loop: call it repeatedly with
-       different model_factory variants, compare EvalResult.aggregate, pick a winner.
-       evaluate() itself never tunes anything.
-    4. fit_final_model(model_factory, data, feature_cols, ...) refits once on every
-       row of `data` -- no split at all -- for the artifact that actually ships.
-
-There is deliberately no held-out block anywhere in this module. Every walk-forward
-fold's test score is already out-of-sample for that fold, so the fold metrics from
-step 2 are the only real performance numbers this project reports; the model from step
-4 is trained on strictly more data than any fold model and is never itself scored, since
-scoring it on anything would mean that thing had already been part of its training data.
-
-This file absorbed what used to be `evaluate_v2.py`. That split existed so the harness
-`notebooks/modelling/3.1` and `3.2` ran through stayed readable beside the one `3.3`
-replaced it with, but two modules each exporting a function called `evaluate` is a live
-way to import the wrong one. The notebooks are stored artifacts with their outputs saved,
-so they do not need the old code to keep meaning what they say.
+There is deliberately no held-out block anywhere: every walk-forward fold's test
+score is already out-of-sample, so the fold metrics from evaluate() are the only
+real performance numbers this project reports. The final model is never itself
+scored, since scoring it on anything would mean that thing had already been part
+of its training data.
 """
 
 from dataclasses import dataclass, field
@@ -85,14 +68,13 @@ __all__ = [
 
 def _mcnemar_p_value(y_true, model_pred, baseline_pred) -> float:
     """One-sided McNemar's exact test: is the model right more often than the
-    baseline is, among the rows where they disagree?
+    baseline, among the rows where they disagree?
 
-    Only the discordant pairs matter -- rows both get right or both get wrong carry
-    no information about which is better. b = model right & baseline wrong, c =
-    model wrong & baseline right. Under "no real difference", b should be a fair
-    coin flip of b+c, so this is a one-sided exact binomial test of b against
-    Binomial(b + c, 0.5). NaN when there's no discordance to test (identical
-    predictions), rather than a misleadingly confident p-value.
+    Only discordant pairs matter (both right or both wrong carries no information).
+    b = model right & baseline wrong, c = model wrong & baseline right. Under "no
+    real difference", b should be a fair coin flip of b+c, so this is a one-sided
+    exact binomial test of b against Binomial(b + c, 0.5). NaN when there's no
+    discordance to test, rather than a misleadingly confident p-value.
     """
     model_correct = np.asarray(model_pred) == np.asarray(y_true)
     baseline_correct = np.asarray(baseline_pred) == np.asarray(y_true)
@@ -148,11 +130,8 @@ class FoldResult:
 @dataclass
 class EvalResult:
     """The output of evaluate(): one FoldResult per walk-forward fold, plus the
-    tidy/aggregate views built from them.
-
-    Nothing here is computed lazily from data evaluate() has discarded -- metrics_df
-    and aggregate are pure reshapes of what's already in .folds, so results printed
-    from either always agree with the fold objects themselves.
+    tidy/aggregate views built from them. metrics_df and aggregate are pure
+    reshapes of what's already in .folds, nothing computed from discarded data.
     """
 
     folds: list = field(default_factory=list)
@@ -160,7 +139,7 @@ class EvalResult:
     @property
     def models(self) -> list:
         """The fold-fitted models, in fold order. None of these is "the" model to
-        deploy -- see fit_final_model() for that."""
+        deploy; see fit_final_model() for that."""
         return [f.model for f in self.folds]
 
     @property
@@ -179,37 +158,26 @@ def row_grouped_splits(groups: pd.Series, n_splits: int = 5):
     """Yield (train_mask, test_mask) row-level boolean arrays per walk-forward fold,
     each fold's test window sized by row count rather than group count.
 
-    `groups` is the unit no fold may divide, one value per row, and it should be the
-    aligned market session (`market.labels.align_sessions`). The split is grouped at
-    all because rows sharing a label and market features would otherwise be scored
-    against siblings the model trained on, so the right group is whatever shares
-    those values, and that is the session. An article published after Friday's close
-    and one published before Monday's open anchor to the same session and carry an
-    identical label, three calendar days apart. Grouping by calendar day instead,
-    which this function used to do, split those apart and leaked the answer across
-    the boundary on 2 to 4% of rows.
+    `groups` is the unit no fold may divide, one value per row: the aligned market
+    session (`market.labels.align_sessions`). Grouping matters because rows sharing
+    a label and market features would otherwise be scored against siblings the
+    model trained on. An article published after Friday's close and one published
+    before Monday's open anchor to the same session and carry an identical label,
+    three calendar days apart; grouping by calendar day instead (this function's
+    old behavior) split those apart and leaked the answer on 2-4% of rows.
 
     Unique groups are laid out in chronological order and cut into `n_splits + 1`
-    contiguous chunks so that each chunk's row count is as close to
-    `len(groups) / (n_splits + 1)` as the group boundaries allow. A cut goes to
-    whichever boundary is nearest the target, before or after, never inside a group.
-    Fold `k`'s train set is chunks `1..k` combined (the expanding window); its test
-    set is chunk `k + 1` alone. This mirrors what `TimeSeriesSplit` does for
-    individual rows, just applied to group-sized blocks sized by the rows inside
-    them instead of by count of groups.
+    contiguous chunks so each chunk's row count is as close to
+    `len(groups) / (n_splits + 1)` as the group boundaries allow, cutting at
+    whichever boundary is nearest the target, never inside a group. Fold `k`'s
+    train set is chunks `1..k` combined (the expanding window); its test set is
+    chunk `k + 1` alone, mirroring `TimeSeriesSplit` but on group-sized blocks.
 
-    Taking the nearest boundary rather than the first one past the target matters
-    because sessions are fewer and larger than calendar days: always overshooting
-    compounds into uneven folds. It is a heuristic, not a guarantee, since the
-    choice is greedy per cut while fold size is the gap between consecutive cuts, so
-    a locally nearer boundary can leave a globally worse fold. Over random group
-    shapes it wins about two thirds of the time; on all four of this project's
-    corpora it wins.
-
-    On a corpus that publishes in uneven bursts (the original one: 92 active days
-    out of 351, clustered into ~13 bursts of very different sizes), row-count sizing
-    is what keeps every fold's test set a comparable amount of data -- the property
-    `day_grouped_splits` was meant to guarantee but, on that corpus, didn't.
+    The nearest-boundary choice is greedy per cut, so it is a heuristic, not a
+    guarantee (a locally nearer boundary can leave a globally worse fold), but it
+    wins on all four of this project's corpora. On a corpus that publishes in
+    uneven bursts, row-count sizing is what keeps every fold's test set a
+    comparable amount of data.
     """
     groups = groups.reset_index(drop=True)
     group_order = np.sort(groups.unique())
@@ -256,10 +224,8 @@ def evaluate(
     date_col: str = DEFAULT_DATE_COL,
     group_col: str = DEFAULT_GROUP_COL,
 ) -> EvalResult:
-    """`evaluate.evaluate()`, with folds sized by row count instead of day count --
-    see `row_grouped_splits` and this module's docstring for why. Same contract,
-    same `EvalResult`/`FoldResult` shapes, same metrics; only which rows land in
-    which fold changes.
+    """Walk-forward evaluation with folds sized by row count instead of day count
+    (see `row_grouped_splits` and the module docstring for why).
 
     `group_col` names the column holding the unit no fold may divide: the aligned
     market session, which `market.labels.align_sessions` produces.
@@ -315,14 +281,12 @@ def evaluate(
 
 
 def weighted_aggregate(result: EvalResult, weight_col: str = "n_test") -> pd.DataFrame:
-    """Row-count-weighted mean of every numeric metric across folds -- `3.2` section
-    6.2's other recommended fix, alongside `row_grouped_splits`.
+    """Row-count-weighted mean of every numeric metric across folds.
 
-    `EvalResult.aggregate` (`evaluate.py`) takes a plain mean across folds: a 176-row
-    fold and a 529-row fold each count as "one fold," even though the smaller fold's
-    score rests on roughly a third as much evidence. This weights each fold's
-    contribution by `weight_col` (test-set row count by default) instead, so a fold's
-    influence on the aggregate matches how much data it was actually scored on.
+    `EvalResult.aggregate` takes a plain mean across folds, so a 176-row fold and a
+    529-row fold each count as "one fold" even though the smaller fold's score
+    rests on roughly a third as much evidence. This weights each fold's
+    contribution by `weight_col` (test-set row count by default) instead.
 
     Returns a single-row DataFrame, in the same units and columns as
     `EvalResult.aggregate.loc["mean"]`, so the two are directly comparable.
@@ -345,12 +309,11 @@ def fit_final_model(
 
     Call this once, after evaluate() has been used (directly, or as the inner loop
     of a hyperparameter search) to pick model_factory, feature_cols, and every other
-    decision. At that point there is nothing left for held-out data to protect
-    against: this model is not evaluated by this function or by anything else,
-    because scoring it on any data would mean that data had already been part of
-    its training set. The walk-forward fold metrics from evaluate() are, and remain,
-    the only real performance numbers for this project -- this call exists purely to
-    produce the artifact to save and deploy.
+    decision. This model is never evaluated, by this function or anything else,
+    since scoring it on any data would mean that data had already been part of its
+    training set. The walk-forward fold metrics from evaluate() remain the only
+    real performance numbers for this project; this call exists purely to produce
+    the artifact to save and deploy.
     """
     X, y = data[feature_cols], data[label_col]
     model = model_factory()
@@ -361,12 +324,9 @@ def fit_final_model(
 def feature_importance(result: EvalResult, feature_cols: list) -> pd.DataFrame | None:
     """Mean +/- std feature importance across the fold models an EvalResult already
     holds, for models that expose `.feature_importances_` after fitting (LightGBM
-    and sklearn's tree ensembles). Returns None for models that don't --
-    interpretability is a bonus this harness offers when it can, not a requirement
-    every model must satisfy.
+    and sklearn's tree ensembles). Returns None for models that don't.
 
-    Reuses result.models rather than fitting anything itself: the whole point of
-    EvalResult carrying its fold models is that analysis like this doesn't need a
+    Reuses result.models rather than fitting anything itself, so this needs no
     second, separate walk-forward pass.
     """
     per_fold = []

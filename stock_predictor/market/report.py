@@ -1,14 +1,9 @@
 """The market feature table's report: what it holds, and what its labels look like.
 
-The market-side counterpart to `fetch.report`, and it borrows that module's
-coverage helpers rather than restating them: "how do these rows fall over the
-span?" is the same question whether the rows are a fetch or a feature table.
-
-What is new here is the label. A fetch report asks whether collection was even;
-this one asks whether the thing a model is about to be trained on is balanced,
-and whether that balance holds still over time. A table that is 50/50 overall
-but 80/20 inside each quarter is the regime-fingerprinting problem notebook 3.2
-found, visible before a model is fitted rather than after.
+Borrows `fetch.report`'s coverage helpers rather than restating them. What is new
+here is the label: whether it is balanced, and whether that balance holds over
+time. A table that is 50/50 overall but 80/20 inside each quarter is the
+regime-fingerprinting problem notebook 3.2 found, visible before a model is fitted.
 
 Writes `reports/{TICKER}_market_features_report.md` with its figures in
 `reports/figures/`, following the fetch layer's naming.
