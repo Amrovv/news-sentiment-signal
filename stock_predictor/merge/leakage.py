@@ -12,9 +12,9 @@ matches:
 
 Daily bars are indexed at midnight but represent that day's close, which is not
 known until the market shuts. For a pre-market or market-hours article the leaky
-form uses a price from the future. That bug was real -- it is what
-`reports/findings/momentum_1d-leakage-finding.md` documents -- and the fix was
-the `ref_date.normalize()` cutoff in `cumulative_return`.
+form uses a price from the future. That bug was real (documented in
+`reports/findings/momentum_1d-leakage-finding.md`) and the fix was the
+`ref_date.normalize()` cutoff in `cumulative_return`.
 
 `momentum_1d` is the one worth reconstructing because it is the shortest window
 and so the most sensitive: a one-day shift changes it completely, while the same
@@ -101,8 +101,8 @@ def test_momentum_1d(
     frame["matches_correct"] = np.isclose(
         stored, frame["correct"].to_numpy(dtype=float), atol=1e-9
     )
-    # Where the two hypotheses coincide -- a non-trading-day publish, with no bar
-    # for the article's own day -- a leaky match proves nothing either way.
+    # Where the two hypotheses coincide (a non-trading-day publish, with no bar
+    # for the article's own day) a leaky match proves nothing either way.
     frame["ambiguous"] = np.isclose(
         frame["leaky"].to_numpy(dtype=float), frame["correct"].to_numpy(dtype=float), atol=1e-9
     )

@@ -70,7 +70,7 @@ def plot_join_composition(result, ticker: str):
 def plot_sentiment_vs_return(merged: pd.DataFrame, ticker: str):
     """Sentiment against the return, and sentiment split by the label.
 
-    Not a result -- the relationship is weak and expected to be. It is a merge
+    Not a result; the relationship is weak and expected to be. It is a merge
     check: if the join had paired the wrong rows, the boxes below would sit on
     top of each other and the scatter would be structureless.
     """
@@ -116,9 +116,9 @@ def plot_dropped_over_time(result, corpus: pd.DataFrame, ticker: str):
     """Whether the dropped articles cluster in time.
 
     Losses spread evenly are a filter doing its job. Losses concentrated in a
-    few months point at something that failed for a stretch of the corpus -- a
-    scrape that was rate-limited, a gap in the price history -- and that is a
-    different problem with a different fix.
+    few months point at something that failed for a stretch of the corpus (a
+    scrape that was rate-limited, a gap in the price history), a different
+    problem with a different fix.
     """
     dropped = set(result.market_only) | set(result.text_only)
     frame = corpus[["article_id", "timestamp_utc"]].copy()

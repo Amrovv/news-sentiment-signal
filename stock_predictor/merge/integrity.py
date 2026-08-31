@@ -12,10 +12,9 @@ separating, because only one of them is a bug:
     could detect it.
 
 Notebook 2.0 checked the first by hand and confirmed the second held on one
-ticker's corpus. Four tickers now share articles between them -- Finnhub returns
-the same story for AMZN and NVDA when it is about both -- so the second check is
-no longer a formality, and it runs on every merge rather than once in a
-notebook.
+ticker's corpus. Four tickers now share articles between them (Finnhub returns
+the same story for AMZN and NVDA when it is about both), so the second check is
+no longer a formality, and it runs on every merge rather than once in a notebook.
 """
 
 from dataclasses import dataclass, field
@@ -88,8 +87,8 @@ def check_one_id_one_article(
     The check the whole merge rests on. Two tables can each hold unique ids and
     still disagree about what an id *means*; joining them then silently pairs one
     article's features with another article's label. `witness` is a column both
-    sides carry independently -- the publication timestamp, which the text layer
-    records and the market layer copies from the corpus -- so a disagreement is
+    sides carry independently (the publication timestamp, recorded by the text
+    layer and copied from the corpus by the market layer), so a disagreement is
     evidence the id is being reused rather than a formatting difference.
     """
     if witness not in left.columns or witness not in right.columns:
