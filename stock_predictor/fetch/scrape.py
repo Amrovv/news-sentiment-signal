@@ -16,7 +16,7 @@ ticker's `data/raw/{TICKER}_raw_articles.parquet` and write the accepted,
 processed rows to `data/interim/{TICKER}_processed_articles.parquet`. The
 CLI runs in checkpointed chunks (`scrape_corpus_chunked`, SCRAPE_CHUNK_SIZE)
 since a full corpus is tens of thousands of articles and, at REQ_PER_SEC,
-well over an hour of continuous network I/O -- long enough that losing the
+well over an hour of continuous network I/O, long enough that losing the
 whole run to one interruption (a killed process, a dropped connection, a
 machine restart) partway through is a real cost worth checkpointing against,
 not just a theoretical one. Nothing else runs on import.
@@ -159,7 +159,7 @@ def _resolve_time(candidate, api_utc, cross_host):
     article is dropped for want of a page time.
 
     The cross-host bound exists because "the original outlet's own page" is
-    not the same guarantee as "this story is from now" -- a genuinely old,
+    not the same guarantee as "this story is from now": a genuinely old,
     re-referenced story can surface in the feed with a fresh API timestamp
     and a years-old canonical date."""
     if candidate is None:
@@ -254,9 +254,8 @@ def scrape_corpus(articles: pd.DataFrame, max_workers: int = SCRAPE_MAX_WORKERS)
     """Filter to OPEN_SOURCES, run the scrape pipeline, and return the
     accepted rows: real source, corrected UTC time, and clean body text.
 
-    An article is rejected only for a body that never reaches
-    MIN_BODY_CHARS -- time always resolves against the API floor, so text is
-    the only gate.
+    An article is rejected only for a body that never reaches MIN_BODY_CHARS;
+    time always resolves against the API floor, so text is the only gate.
     """
     open_articles = articles[articles["source"].isin(OPEN_SOURCES)].copy()
     results = run_pipeline(open_articles, max_workers=max_workers)

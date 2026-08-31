@@ -62,7 +62,7 @@ def burst_check(articles: pd.DataFrame, timestamp_col: str = "timestamp_utc") ->
 
     Returns a dict with the corpus span, active-day count and share, the
     longest article-free gap, and a per-(active days, article count) table
-    for every calendar month in the span -- the same shape of check
+    for every calendar month in the span, the same shape of check
     `notebooks/modelling/3.0` section 6 ran by hand against the original,
     bursty pull.
     """
@@ -101,7 +101,7 @@ def plot_daily_counts(
 
     A day-by-day markdown table gets unreadable past a few dozen rows; the
     burst pattern this report exists to catch (or rule out) is exactly the
-    kind of shape -- long flat gaps, tight clusters -- that a chart shows at
+    kind of shape (long flat gaps, tight clusters) that a chart shows at
     a glance and a table buries.
 
     `path` lets a caller that keeps its figures beside its own document (the
@@ -129,7 +129,7 @@ def plot_monthly_counts(
     to `reports/figures/{ticker}_{label}_fetch_monthly.png` unless `path` says
     otherwise.
 
-    Alongside the monthly table, not instead of it -- a dozen or so months
+    Alongside the monthly table, not instead of it: a dozen or so months
     reads fine as a table, but a chart is what makes an uneven, tail-heavy
     month (the original bug's signature) jump out immediately.
     """
@@ -160,8 +160,8 @@ def write_fetch_report(
     monthly and daily distribution, and the burst-check numbers above.
 
     `label` distinguishes which corpus this is (e.g. "raw" vs "processed")
-    so reports for the same ticker don't overwrite each other -- it's a free
-    -text tag for the filename and headings, not tied to any dataset schema.
+    so reports for the same ticker don't overwrite each other; it's a
+    free-text tag for the filename and headings, not tied to any dataset schema.
     `path` overrides the default `reports/fetch/{ticker}_{label}_fetch_report.md`
     entirely, mainly so a test or a one-off comparison run can write elsewhere
     without clobbering the real report.

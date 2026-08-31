@@ -1,13 +1,13 @@
 """Pull raw company news from Finnhub's `company_news` endpoint.
 
 `company_news` returns a fixed-size cap of results per call regardless of how
-wide the requested date range is, filled most-recent-first --
-`notebooks/modelling/3.0` section 6 confirmed this: whole-month requests
-against the original pull returned a consistent 126-191 articles per month no
-matter how wide the active window inside it was, silently dropping every day
-but the last few. `pull_company_news` avoids that by requesting narrow, fixed
-windows (`window_days`, one day by default) and concatenating the result, so
-no single call's article count gets anywhere near the cap.
+wide the requested date range is, filled most-recent-first (`notebooks/
+modelling/3.0` section 6 confirmed this: whole-month requests against the
+original pull returned a consistent 126-191 articles per month no matter how
+wide the active window inside it was, silently dropping every day but the
+last few). `pull_company_news` avoids that by requesting narrow, fixed windows
+(`window_days`, one day by default) and concatenating the result, so no single
+call's article count gets anywhere near the cap.
 
 Ported from `notebooks/text/1.0-aw-corpus.ipynb`, which is left untouched as
 a historical record of the original, monthly-windowed pull and does not
@@ -61,8 +61,8 @@ def _fetch_window(
     up to FETCH_RETRY_ATTEMPTS times before giving up on this window alone.
 
     Returns [] (not a raised exception) on final failure, so one dead window
-    doesn't cost the rest of a multi-minute pull -- logged as an error so the
-    gap it leaves is visible, and would show up in the fetch report's
+    doesn't cost the rest of a multi-minute pull; logged as an error so the
+    gap it leaves is visible and would show up in the fetch report's
     per-day counts."""
     last_exc = None
     for attempt in range(1, FETCH_RETRY_ATTEMPTS + 1):
@@ -119,7 +119,7 @@ def pull_company_news(
             logger.warning(
                 f"{ticker} {start:%Y-%m-%d}..{window_end:%Y-%m-%d} returned "
                 f"{len(articles)} articles, at or above FETCH_CAP_WARN_COUNT "
-                f"({FETCH_CAP_WARN_COUNT}) -- this window may be getting "
+                f"({FETCH_CAP_WARN_COUNT}); this window may be getting "
                 f"capped the same way the original monthly pull was; narrow "
                 f"window_days and re-pull this range."
             )
@@ -142,11 +142,11 @@ def pull_company_news(
 
     # A narrow window_days means far more window boundaries than the old
     # monthly pull had (roughly one per day in range, not one per month), so
-    # the same article landing in two adjacent windows -- a boundary
-    # timestamp, API timezone slop -- is a real risk here in a way it barely
-    # was before. Dedupe at the source rather than downstream, since a
-    # duplicate article_id surviving into a merge elsewhere (e.g.
-    # scrape_corpus) multiplies rather than just double-counts.
+    # the same article landing in two adjacent windows (a boundary timestamp,
+    # API timezone slop) is a real risk here in a way it barely was before.
+    # Dedupe at the source rather than downstream, since a duplicate
+    # article_id surviving into a merge elsewhere (e.g. scrape_corpus)
+    # multiplies rather than just double-counts.
     n_dupes = df["article_id"].duplicated().sum() if len(df) else 0
     if n_dupes:
         logger.warning(

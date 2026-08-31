@@ -3,11 +3,11 @@ burst pattern (see `report.py`) show up on its own, or does it line up with
 the others?
 
 That distinction is the whole point of doing this cross-ticker, not just
-per-ticker: a heavy month that shows up for one ticker only is company
--specific news (real signal). A heavy month that shows up across several
+per-ticker: a heavy month that shows up for one ticker only is company-specific
+news (real signal). A heavy month that shows up across several
 independently-pulled tickers at once is either a real market-wide event
 (earnings season, a macro shock) or, if it also has the flat-count signature
-`report.py` describes, a shared collection artifact -- and either way it's
+`report.py` describes, a shared collection artifact, and either way it's
 something only a joint view can catch. Per-ticker reports can't see it because
 each only ever looks at its own corpus.
 
@@ -41,8 +41,8 @@ def _load(ticker: str, dataset: str, timestamp_col: str = "timestamp_utc") -> pd
     """Read one ticker's corpus, keeping only the timestamp column.
 
     Everything this module computes is a function of publication time, while the
-    corpus itself carries the article bodies -- several GB per ticker, and this
-    reads four of them twice over. Projecting at read time keeps parquet from
+    corpus itself carries the article bodies (several GB per ticker, and this
+    reads four of them twice over). Projecting at read time keeps parquet from
     touching those column chunks at all, rather than loading them to drop them.
     """
     path = raw_articles_path(ticker) if dataset == "raw" else processed_articles_path(ticker)
@@ -55,7 +55,7 @@ def _load(ticker: str, dataset: str, timestamp_col: str = "timestamp_utc") -> pd
 
 def _plot_monthly_comparison(per_ticker_month: dict[str, pd.DataFrame], dataset: str) -> Path:
     """Grouped bar chart, one series per ticker, of articles per calendar
-    month -- the shape a shared or offset burst month shows up in directly."""
+    month, the shape a shared or offset burst month shows up in directly."""
     combined = pd.DataFrame({t: pm["articles"] for t, pm in per_ticker_month.items()}).fillna(0)
     combined = combined.sort_index()
     months = combined.index.astype(str)
