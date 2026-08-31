@@ -12,11 +12,11 @@ Runs downstream of entity_filter, on the SENTENCE_COLUMNS table.
 needs_score() decides which sentences are scored, and the aggregator reads the
 same predicate, so the two cannot drift.
 
-Cache saves MERGE with the cache loaded at the start of the call. score_sentences()
-returns only the current call's hashes, so saving it alone truncates the file.
+Cache saves MERGE with the cache loaded at the start of the call: score_sentences()
+returns only the current call's hashes, so saving it alone would truncate the file.
 
 Scores are stored as raw pos/neg/neu triples. The fus_* columns are the exception,
-being signed scalars from fusion.py; the triples behind them are still persisted.
+signed scalars from fusion.py, but the triples behind them are still persisted.
 """
 
 import hashlib
@@ -68,10 +68,8 @@ def needs_score(sentences_df: pd.DataFrame) -> pd.Series:
         (mentions_target | mentions_ceo) & ~is_boilerplate
 
     Shared by the scorer and the aggregator so the two cannot drift: a feature reading
-    a new sentence bucket must be added here or it gets NaN for every article.
-
-    A missing is_boilerplate defaults to all-False; the mentions_* columns are
-    required. Returns a bool Series aligned to sentences_df.index.
+    a new sentence bucket must be added here or it gets NaN for every article. Missing
+    is_boilerplate defaults to all-False; the mentions_* columns are required.
     """
     missing = [c for c in CONSUMED_MENTION_COLUMNS if c not in sentences_df.columns]
     if missing:
@@ -136,10 +134,8 @@ def _load_model_and_tokenizer():
 
 
 def _build_label_index_map(model) -> dict[str, int]:
-    """Map {"positive": idx, "negative": idx, "neutral": idx} by reading
-    model.config.id2label rather than assuming FinBERT's documented order
-    ({0: positive, 1: negative, 2: neutral}). Verifies all three expected
-    labels are present regardless of case/order in the config."""
+    """Map {"positive"/"negative"/"neutral": idx} from model.config.id2label rather
+    than assuming FinBERT's documented order. Raises if not all three are present."""
     id2label = model.config.id2label
     index_map: dict[str, int] = {}
     for idx, label in id2label.items():
@@ -165,9 +161,8 @@ def score_sentences(
     """Core batched + cached FinBERT scorer.
 
     Dedupes on text_hash, splits into cache hits and a needs-scoring remainder, sorts
-    that remainder by length before batching so same-batch sequences pad alike (20-30%
-    faster on CPU), then runs under torch.no_grad() truncated to MAX_TOKENS.
-
+    that remainder by length before batching so same-batch sequences pad alike
+    (20-30% faster on CPU), then runs under torch.no_grad() truncated to MAX_TOKENS.
     Label order is read from model.config.id2label, not assumed. If every hash hits,
     the model is never loaded even with model/tokenizer None.
 
@@ -254,13 +249,13 @@ def score_sentence_table(
 ) -> pd.DataFrame:
     """Score the unique texts in `sentences_df` and merge pos/neg/neu back on.
 
-    With only_relevant=True (the default) only needs_score() rows reach FinBERT, which
-    gives identical article features for ~60% fewer forward passes. Rows outside the
-    mask get NaN, never 0.
+    With only_relevant=True (default) only needs_score() rows reach FinBERT, giving
+    identical article features for ~60% fewer forward passes. Rows outside the mask
+    get NaN, never 0.
 
     save_cache() runs once after all batches, not per batch, since parquet writes are
-    full-file rewrites; an interrupted run therefore loses that run's progress. The
-    save merges with the cache loaded at call start.
+    full-file rewrites (an interrupted run loses that run's progress); the save
+    merges with the cache loaded at call start.
     """
     cache_df = load_cache(cache_path)
 
@@ -305,12 +300,12 @@ def score_sentence_table(
 def score_headlines(headlines_df: pd.DataFrame, cache_path=SENTIMENT_CACHE_PATH) -> pd.DataFrame:
     """Score each headline standalone, one row per input row.
 
-    One extra forward pass per article, since headlines carry disproportionate weight.
-    Reuses score_sentences() and the sentence cache.
+    One extra forward pass per article, since headlines carry disproportionate
+    weight. Reuses score_sentences() and the sentence cache.
 
-    The save MERGES, like score_sentence_table(). This function is the one that
-    exposed the bug: a corpus run calls it straight after score_sentence_table(), so
-    replacing the file wiped the sentence entries just written.
+    The save MERGES, like score_sentence_table(); a corpus run calls this straight
+    after score_sentence_table(), so replacing the file would wipe the sentence
+    entries just written.
     """
     cache_df = load_cache(cache_path)
     headlines = headlines_df["headline"].tolist()
@@ -332,20 +327,15 @@ def aggregate_article_features(
 ) -> pd.DataFrame:
     """Article-level aggregates from an already-scored sentence table.
 
-    Never scores: `sentences_df` must already carry pos/neg/neu.
+    Never scores: `sentences_df` must already carry pos/neg/neu. Aggregates run over
+    non-boilerplate sentences only; article_length still sums the full group, since
+    it measures the article as published. maxmag stores the three raw probabilities
+    of the largest |pos - neg| target sentence rather than one signed scalar.
 
-    Aggregates run over non-boilerplate sentences only; article_length still sums the
-    full group, since it measures the article as published. maxmag stores the three
-    raw probabilities of the largest |pos - neg| target sentence rather than one
-    signed scalar.
-
-    absa_* and fus_* are soft feature-detects: absent ABSA columns make both families
-    NaN with one warning each, and the pipeline runs with ABSA off.
-
-    Without `headline_scores` the sent_headline_* columns are NaN and one warning is
-    logged.
-
-    Empty sentence sets give NaN, never 0.
+    absa_* and fus_* are soft feature-detects: absent ABSA columns make both
+    families NaN with one warning each, and the pipeline runs with ABSA off. Without
+    `headline_scores` the sent_headline_* columns are NaN with a warning. Empty
+    sentence sets give NaN, never 0.
     """
     if len(sentences_df) == 0:
         return pd.DataFrame(
@@ -378,9 +368,8 @@ def aggregate_article_features(
             ]
         )
 
-    # Older sentence tables (and the single-article analyze() path before
-    # boilerplate flagging existed) may not carry these columns; default them
-    # to all-False once, up front, rather than guarding at every use site.
+    # Older sentence tables may lack this column; default to all-False once,
+    # up front, rather than guarding at every use site.
     sentences_df = sentences_df.copy().reset_index(drop=True)
     for col in ("is_boilerplate",):
         if col not in sentences_df.columns:
@@ -413,11 +402,7 @@ def aggregate_article_features(
         fusion_features = fusion.aggregate_fusion_features(sentences_df)
 
     def _absa_mean(frame) -> tuple[float, float, float]:
-        """Mean absa_pos/neg/neu over `frame`, or NaN on an empty selection.
-
-        Same no-signal-vs-measured-neutral rule as every FinBERT aggregate
-        above: an empty bucket is NaN, never 0.
-        """
+        """Mean absa_pos/neg/neu over `frame`; NaN (never 0) on an empty selection."""
         if not has_absa or len(frame) == 0:
             return float("nan"), float("nan"), float("nan")
         return (
@@ -428,25 +413,21 @@ def aggregate_article_features(
 
     rows = []
     for article_id, group in sentences_df.groupby("article_id", sort=False):
-        # n_total_sents / entity_share describe the non-boilerplate body; this
-        # is the same "~is_boilerplate" term needs_score() applies.
+        # n_total_sents / entity_share describe the non-boilerplate body, same
+        # "~is_boilerplate" term needs_score() applies.
         body = group[~group["is_boilerplate"]]
         grp_consumed = consumed.loc[group.index]
 
-        # needs_score bucket 1 (mentions_target): sent_entity_*,
-        # sent_entity_maxmag_*, sent_entity_lead_*.
+        # needs_score bucket 1 (mentions_target).
         target = group[grp_consumed & group["mentions_target"]]
         lead_target = target[target["sent_idx"] < LEAD_SENTENCE_WINDOW]
-        # needs_score bucket 3 (mentions_ceo): sent_ceo_*, narrowed here to
-        # CEO-only sentences -- a subset of the mentions_ceo rows needs_score()
-        # keeps, so it is covered by the predicate.
+        # needs_score bucket 3 (mentions_ceo), narrowed to CEO-only sentences.
         ceo_only = group[grp_consumed & group["mentions_ceo"] & ~group["mentions_target"]]
-        # Every CEO sentence, including those that also name the company. This is
-        # the population fus_ceo_mean averages over, and it is what
-        # has_ceo_mention reports. Roughly half of all CEO sentences name the
-        # company in the same breath ("Musk said Tesla would..."), so the
-        # CEO-only count above answers a narrower question than "does this
-        # article discuss the CEO" and cannot stand in for it.
+        # Every CEO sentence, including those that also name the company. Roughly
+        # half of CEO sentences name the company in the same breath ("Musk said
+        # Tesla would..."), so ceo_only answers a narrower question than "does
+        # this article discuss the CEO" and cannot stand in for it. This is the
+        # population fus_ceo_mean averages over and what has_ceo_mention reports.
         ceo_any = group[grp_consumed & group["mentions_ceo"]]
 
         n_entity = len(target)
@@ -519,9 +500,8 @@ def aggregate_article_features(
 
     result = pd.DataFrame(rows)
 
-    # fus_*: left-merge so every article_id in `result` keeps its row even if
-    # fusion_features (built from the same sentences_df) somehow disagrees on
-    # membership; in practice the two are built from the same article_id set.
+    # left-merge so every article_id in `result` keeps its row even if
+    # fusion_features somehow disagrees on membership.
     result = result.merge(fusion_features, on="article_id", how="left")
 
     if headline_scores is not None:
@@ -553,11 +533,10 @@ def analyze(
 ) -> dict:
     """Single-article entry point for the live demo.
 
-    Runs the same path as the batch pipeline (split, tag, score, aggregate), so there
-    is no second implementation to drift. Returns one article's features as a dict.
-
-    Unlike the batch functions this persists newly-scored text before returning.
-    `cache_path` exists so tests can point somewhere disposable.
+    Runs the same path as the batch pipeline (split, tag, score, aggregate), so
+    there is no second implementation to drift. Persists newly-scored text before
+    returning, unlike the batch functions. `cache_path` exists so tests can point
+    somewhere disposable. Returns one article's features as a dict.
     """
     synthetic_article_id = "__analyze__"
 
@@ -608,7 +587,7 @@ def analyze(
     features_df = aggregate_article_features(sentences_df, headline_scores=headline_scores)
 
     if len(features_df) == 0:
-        # No sentences at all (e.g. empty article text) -- build an all-NaN /
+        # No sentences at all (empty article text): build an all-NaN /
         # zero-count row so the return shape is still consistent.
         empty = aggregate_article_features(
             pd.DataFrame(columns=[*entity_filter.SENTENCE_COLUMNS, "pos", "neg", "neu"])
@@ -690,10 +669,9 @@ def headline_names_target(headlines_df: pd.DataFrame, ticker: str) -> pd.Series:
     """Boolean mask: does each headline name the target explicitly?
 
     Uses entity_filter's compiled "names" pattern rather than a local regex, so a
-    headline matches by the same rules a sentence does.
-
-    Only the "names" tier counts; the person tier does not, matching the sentence-level
-    rule that mentions_ceo never sets mentions_target.
+    headline matches by the same rules a sentence does. Only the "names" tier
+    counts, matching the sentence-level rule that mentions_ceo never sets
+    mentions_target.
     """
     pattern = entity_filter._build_ticker_patterns(ticker)["names"]
     text = headlines_df["headline"].fillna("").astype(str)
@@ -711,11 +689,10 @@ def build_model_features(
 ) -> pd.DataFrame:
     """The lean, model-facing table: article_id + MODEL_FEATURE_COLUMNS.
 
-    Composed from the same functions the wide table uses, so the two cannot disagree.
-    `headline_finbert` and `headline_absa` are both required, since a fused headline
-    needs both scorers on the same string.
-
-    Every feature is NaN, never 0, where its population is empty.
+    Composed from the same functions the wide table uses, so the two cannot
+    disagree. `headline_finbert` and `headline_absa` are both required, since a
+    fused headline needs both scorers on the same string. Every feature is NaN,
+    never 0, where its population is empty.
     """
     wide = aggregate_article_features(sentences_df, headline_scores=headline_finbert)
     ceo = fusion.aggregate_ceo_fusion_features(sentences_df)
@@ -728,13 +705,12 @@ def build_model_features(
         .merge(head, on="article_id", how="left")
         .merge(extra, on="article_id", how="left")
     )
-    # n_trusted_sents is a count: a left-merge miss means aggregate_extra_fusion_features
-    # never saw that article_id (empty target population), which genuinely is 0, not NaN.
+    # n_trusted_sents is a count: a left-merge miss means the article had an
+    # empty target population, which genuinely is 0, not NaN.
     out["n_trusted_sents"] = out["n_trusted_sents"].fillna(0)
 
-    # Body OR headline: roughly a quarter of the articles with no target sentence
-    # in the body have an empty body, so filtering on the body alone would drop
-    # real articles because extraction failed.
+    # Body OR headline: roughly a quarter of articles with no target sentence in
+    # the body have an empty body (extraction failed), not a real absence.
     if headlines_df is not None:
         head_hit = headline_names_target(headlines_df, ticker)
         relevant_ids = set(headlines_df.loc[head_hit, "article_id"])
@@ -742,16 +718,15 @@ def build_model_features(
         out = out[keep].reset_index(drop=True)
 
         # Headline-only articles: no body sentiment, and 0.0 on a signed score
-        # reads as exactly that. Decodable, since every filled row has
-        # n_entity_sents == 0 and no other row does.
+        # reads as exactly that (decodable since only these rows have
+        # n_entity_sents == 0).
         filled = [*FUSION_FEATURE_COLUMNS, "fus_ceo_mean", *fusion.EXTRA_FUSION_COLUMNS]
         body_absent = out["n_entity_sents"] == 0
         out.loc[body_absent, filled] = out.loc[body_absent, filled].fillna(0.0)
 
-    # Small-sample shrinkage, in place on the same column names -- the raw vs.
-    # shrunk duality in notebooks/2.1 was an EDA device only. Population counts
-    # (n_entity_sents, n_trusted_sents) are always real here, filled above for
-    # rows with no sentence data.
+    # Small-sample shrinkage, in place on the same column names. Population
+    # counts (n_entity_sents, n_trusted_sents) are always real here, filled
+    # above for rows with no sentence data.
     out["fus_conf_graft_floor_mean"] = fusion.shrink(
         out["fus_conf_graft_floor_mean"], out["n_entity_sents"], fusion.SHRINKAGE_K_ENTITY
     )
@@ -762,8 +737,8 @@ def build_model_features(
     out["has_ceo_mention"] = out["n_ceo_mention_sents"] > 0
 
     # Derived last, so they read the shrunk, filled body mean rather than the
-    # raw NaN it replaced. On a headline-only article the body mean is 0.0, so
-    # the headline gap is the headline score itself, which is the honest reading.
+    # raw NaN it replaced. On a headline-only article body_mean is 0.0, so the
+    # headline gap is just the headline score, the honest reading.
     body_mean = out["fus_conf_graft_floor_mean"]
     out["fus_headline_gap"] = out["fus_headline"] - body_mean
     out["fus_lead_gap"] = out["fus_conf_graft_floor_lead"] - body_mean

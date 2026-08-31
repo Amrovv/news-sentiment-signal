@@ -1,17 +1,17 @@
 """Sentence-level entity tagging for news articles.
 
 Splits article bodies and tags each sentence as being about the target, about
-another named company, or neither. Does not filter sentences out, beyond dropping
-scraper residue shorter than MIN_SENT_CHARS.
+another named company, or neither. Does not drop sentences, beyond scraper
+residue shorter than MIN_SENT_CHARS.
 
 config.COMPANIES is a symmetric registry: any entry can be the target, chosen at
 runtime by `ticker`. Its "names" tier is unambiguous; its "person" tier is
 informational and never sets mentions_target on its own.
 
-Spans, not strings. The parse that finds sentence boundaries also supplies the
-entities tagging needs, so split_sentences() can return spaCy Spans and the tagging
-path consumes them. String callers get parsed on demand, keeping one tagging
-implementation.
+Works on spaCy Spans, not strings: the parse that finds sentence boundaries also
+supplies the entities tagging needs, so split_sentences() can return Spans and the
+tagging path consumes them directly. String callers get parsed on demand, so there
+is one tagging implementation.
 
     split_sentences()    sentence-split article bodies with spaCy (batched)
     tag_sentences()      per article: explicit alias tagging + coref mentions
@@ -60,14 +60,13 @@ def _fix_missing_space(text: str) -> str:
 
 
 def _get_nlp():
-    """Load (once, then memoise) the spaCy pipeline for splitting and tagging.
+    """Load (once, then memoize) the spaCy pipeline for splitting and tagging.
 
-    DO NOT ADD "ner" TO THE EXCLUDE LIST. It looks unused and is expensive, but PERSON
-    entities are load-bearing in map_coref_clusters(), _coref_hits_in_sentence() and
-    _is_person_like(). Emptying doc.ents breaks all three without raising. The same
-    goes for "parser", which is what produces doc.sents and the dep_/head fields
-    _is_expletive_token() reads. What SPACY_EXCLUDE does drop is the tagger,
-    attribute_ruler and lemmatizer, whose pos_/tag_/lemma_ output nothing here reads.
+    Do not add "ner" to the exclude list: PERSON entities are load-bearing in
+    map_coref_clusters(), _coref_hits_in_sentence() and _is_person_like(); emptying
+    doc.ents breaks all three silently. Same for "parser" (doc.sents, dep_/head used
+    by _is_expletive_token()). SPACY_EXCLUDE only drops tagger, attribute_ruler and
+    lemmatizer, unused here.
     """
     global _NLP
     if _NLP is None:
@@ -80,17 +79,14 @@ def split_sentences(texts: list[str], nlp=None, return_spans: bool = False, n_pr
     """Sentence-split a batch of article bodies through nlp.pipe().
 
     Sentences shorter than MIN_SENT_CHARS after stripping are dropped as scraper
-    residue.
+    residue. return_spans=False returns strings; True returns spaCy Spans (reusing
+    the parse and entities already computed for the boundaries), same length filter
+    either way.
 
-    return_spans=False returns lists of strings; True returns spaCy Spans, keeping the
-    parse and entities computed to find the boundaries. The same length filter applies
-    either way, so both forms select the same sentences.
-
-    `n_process` defaults to SPACY_N_PROCESS on a batch of at least
-    SPACY_MULTIPROCESS_MIN_DOCS documents and to 1 below that, since spawning
-    workers costs more than it saves on a handful of texts. Workers spawn on
-    Windows, so a caller passing more than 1 must be importable and guarded by
-    `if __name__ == "__main__"`.
+    `n_process` defaults to SPACY_N_PROCESS on batches of at least
+    SPACY_MULTIPROCESS_MIN_DOCS documents, else 1 (spawning workers costs more than it
+    saves on a handful of texts). Workers spawn on Windows, so a caller passing
+    n_process > 1 must be importable and guarded by `if __name__ == "__main__"`.
 
     Returns one list per input article, in input order.
     """
@@ -120,10 +116,8 @@ def _compile_alias_pattern(aliases: list[str]) -> re.Pattern | None:
     """Build one boundary-anchored, case-insensitive regex from a list of aliases.
 
     Each alias is re.escape()'d so multi-word aliases and "$TSLA" match literally.
-
-    The boundary is (?<![A-Za-z0-9-])...(?![A-Za-z0-9-]) rather than \b, because \b
-    treats "-" as a non-word character and would match a ticker inside a URL slug
-    ("tsla-stock-analysis").
+    Boundary is (?<![A-Za-z0-9-])...(?![A-Za-z0-9-]) rather than \b, since \b treats
+    "-" as non-word and would match a ticker inside a URL slug ("tsla-stock-analysis").
     """
     if not aliases:
         return None
@@ -133,12 +127,10 @@ def _compile_alias_pattern(aliases: list[str]) -> re.Pattern | None:
 
 
 def _build_ticker_patterns(ticker: str) -> dict[str, re.Pattern | None]:
-    """Compile the TARGET company's "names" and "person" alias tiers.
+    """Compile the target company's "names" and "person" alias tiers.
 
-    The target is just the COMPANIES entry selected by `ticker` — nothing in
-    the registry is target-specific, which is what lets the pipeline run for
-    any ticker (TSLA is temporary scaffolding).
-
+    The target is just the COMPANIES entry selected by `ticker`; nothing in the
+    registry is target-specific, so the pipeline runs for any ticker.
     """
     alias_cfg = COMPANIES[ticker]
     return {
@@ -150,10 +142,9 @@ def _build_ticker_patterns(ticker: str) -> dict[str, re.Pattern | None]:
 def _build_product_keys() -> frozenset[str]:
     """Union of every registry entry's "products" tier, casefolded.
 
-    Not scoped to the target: a product is never the company whoever owns it, and
-    scoping would leave a rival's model names treated as company mentions.
-
-    Consumed by is_substitutable_mention().
+    Not scoped to the target: a product is never its company, and scoping would let
+    a rival's model names be treated as company mentions. Consumed by
+    is_substitutable_mention().
     """
     keys = set()
     for entry in COMPANIES.values():
@@ -211,19 +202,17 @@ _SPAN_COLUMN_DTYPES = {"mention_char_start": "Int64", "mention_char_end": "Int64
 
 
 def _empty_sentence_frame() -> pd.DataFrame:
-    """An empty frame carrying the exact SENTENCE_COLUMNS schema and dtypes."""
+    """Empty frame with the SENTENCE_COLUMNS schema and dtypes."""
     return pd.DataFrame(columns=SENTENCE_COLUMNS).astype(_SPAN_COLUMN_DTYPES)
 
 
 def _token_at_char(doc, char_idx: int):
     """Map an absolute character offset in `doc` to the token containing it.
 
-    Regex matches need not align to token boundaries ("$TSLA", hyphenated forms), and
-    doc.char_span() returns None on a misaligned range; alignment_mode="expand" covers
-    most of it and the idx scan is the fallback.
-
-    Returns None rather than raising: callers read "cannot locate the token" as "not
-    an expletive".
+    Regex matches need not align to token boundaries ("$TSLA", hyphenated forms);
+    doc.char_span(alignment_mode="expand") covers most cases, idx scan is the
+    fallback. Returns None rather than raising: callers read "no token" as "not an
+    expletive".
     """
     span = doc.char_span(char_idx, char_idx + 1, alignment_mode="expand")
     if span is not None and len(span) > 0:
@@ -235,11 +224,7 @@ def _token_at_char(doc, char_idx: int):
 
 
 def _scan_company(pattern: re.Pattern | None, text: str) -> bool:
-    """True when a company's alias pattern matches anywhere in one sentence.
-
-    A boundary-anchored regex search, nothing more: the sentence either names the
-    company or it does not, and coreference decides everything else.
-    """
+    """True when a company's alias pattern matches anywhere in one sentence."""
     if pattern is None:
         return False
     return pattern.search(text) is not None
@@ -304,7 +289,7 @@ _POSSESSIVE_CLITIC_RE = re.compile(r"(?:'s|’s)$", re.IGNORECASE)
 
 
 def _strip_possessive(token: str) -> str:
-    """Strip a trailing possessive clitic ("'s"/"’s") from one token."""
+    """Strip a trailing possessive clitic from one token."""
     return _POSSESSIVE_CLITIC_RE.sub("", token)
 
 
@@ -313,15 +298,12 @@ def is_substitutable_mention(surface: str) -> bool:
 
     Allows a non-person pronoun from _MENTION_PRONOUNS, a short noun phrase headed by
     a company noun from _COMPANY_HEAD_NOUNS (determiner required above one token), or
-    a bare company head noun.
+    a bare company head noun. Rejects person pronouns, bare demonstratives, plurals,
+    product names, bare possessive clitics, long NPs merely ending in a company word,
+    and generic entity nouns ("the earnings call").
 
-    Rejects person pronouns, bare demonstratives, plurals, product names, bare
-    possessive clitics, long NPs merely ending in a company word, and generic entity
-    nouns such as "the earnings call".
-
-    A rejection means "score the sentence unchanged", never "inject anyway". Consulted
-    both here, so a bad span is never chosen, and again in absa.py immediately before
-    substituting.
+    A rejection means "score the sentence unchanged", never "inject anyway". Checked
+    here and again in absa.py immediately before substituting.
     """
     s = (surface or "").strip()
     if not s:
@@ -349,12 +331,10 @@ def _is_person_like(
 ) -> bool:
     """True when a mention refers to a person rather than to a company.
 
-    Either test suffices: the mention overlaps a PERSON entity from the same document,
-    which needs `start`, `end` and `person_spans` in one coordinate system; or its
-    surface contains a job-title or person-denoting head noun ("the Tesla CEO"), which
-    carries no PERSON entity.
-
-    The surface-only form is what the ABSA path uses, holding the text but not a parse.
+    Either test suffices: overlaps a PERSON entity (needs `start`/`end`/
+    `person_spans` in one coordinate system), or its surface contains a job-title or
+    person-denoting head noun ("the Tesla CEO"), which carries no PERSON entity. The
+    surface-only form is what the ABSA path uses, holding text but no parse.
     """
     if (
         start is not None
@@ -369,12 +349,11 @@ def _is_person_like(
 def _is_expletive_token(token) -> bool:
     """True when `token` is an expletive ("dummy") subject, from the parse.
 
-    Two cases: dep_ == "expl", which en_core_web_sm assigns only to existential
-    "There"; and the extraposition spaCy parses as a plain nsubj, "It" plus a copula
-    plus an attr/acomp plus an extraposed clause ("It's no coincidence THAT ...").
-
-    The extraposed clause is what makes the "It" refer to nothing. Without it ("It's a
-    good quarter for the company") the pronoun is referential and this is False.
+    Two cases: dep_ == "expl" (existential "There"); or the extraposition spaCy
+    parses as a plain nsubj, "It" plus a copula plus an attr/acomp plus an extraposed
+    clause ("It's no coincidence THAT ..."). That clause is what makes "It" refer to
+    nothing; without it ("It's a good quarter for the company") the pronoun is
+    referential and this is False.
     """
     if token is None:
         return False
@@ -404,12 +383,11 @@ def _is_expletive_token(token) -> bool:
 def _is_expletive_mention(doc, abs_start: int, abs_end: int) -> bool:
     """True when the mention at [abs_start, abs_end) in `doc` is an expletive.
 
-    The head token is located by character offset and tested with
-    _is_expletive_token().
-
-    Coref links expletive "It" into company chains, and substitution then produces
-    "Tesla's no coincidence that ...". Such a mention refers to nothing, so the
-    sentence is not resolved at all: no tag, no span, no substitution.
+    Locates the head token by character offset and tests it with
+    _is_expletive_token(). Coref links expletive "It" into company chains, and
+    substitution would then produce "Tesla's no coincidence that ...". Such a
+    mention refers to nothing, so the sentence is not resolved at all: no tag, no
+    span, no substitution.
     """
     if doc is None:
         return False
@@ -436,9 +414,8 @@ def _is_expletive_mention(doc, abs_start: int, abs_end: int) -> bool:
 def _as_spans(sentences, nlp=None) -> list[Span]:
     """Normalize a list of sentences (strings or Spans) to a list of Spans.
 
-    Strings are parsed on demand, which is what gives the module one tagging code
-    path: a caller holding only text goes through the same registry matching as the
-    batch run.
+    Strings are parsed on demand, so a caller holding only text goes through the
+    same tagging path as the batch run.
     """
     if not sentences:
         return []
@@ -459,27 +436,22 @@ def tag_sentences(
 ) -> pd.DataFrame:
     """Tag one article's already-split sentences with target and CEO flags.
 
-    `sentences` accepts plain strings or spaCy Spans; strings are parsed on demand, so
-    the batch and live paths share one tagging implementation.
+    `sentences` accepts plain strings or spaCy Spans; strings are parsed on demand,
+    so the batch and live paths share one tagging implementation.
 
     A target tag comes from one of two sources, in strict precedence:
-
       1. an explicit "names" alias in the sentence, never marked resolved_by_coref
       2. neural coreference via `coref_mentions`, as (abs_char_start, abs_char_end,
          key) triples absolute into the string the Spans were parsed from
+    If neither fires, the sentence is tagged as about no company. mentions_ceo never
+    sets mentions_target on its own. Expletive "it" is dropped before it can set a
+    flag or record a span.
 
-    If neither fires the sentence is tagged as about no company, never guessed at.
-    mentions_ceo never sets mentions_target on its own.
+    mention_char_start/end are relative to this row's `text`, NA when the sentence
+    named the company itself or was not resolved. `coref_mentions` matters only on
+    the Span path; omitting it tags on explicit names alone.
 
-    Expletive "it" is dropped before it can set a flag or record a span.
-
-    mention_char_start / mention_char_end are relative to this row's `text`, NA when
-    the sentence named the company itself or was not resolved.
-
-    `coref_mentions` is meaningful only on the Span path; omitting it tags on explicit
-    names alone.
-
-    Returns a SENTENCE_COLUMNS frame. is_boilerplate is always False here.
+    Returns a SENTENCE_COLUMNS frame; is_boilerplate is always False here.
     """
     spans = _as_spans(sentences, nlp=nlp)
     coref_mentions = list(coref_mentions or [])
@@ -504,9 +476,8 @@ def tag_sentences(
     rows = []
     for idx, span in enumerate(spans):
         raw = span.text
-        # Offsets are computed against the STRIPPED text (what we store and
-        # regex over), so the leading-whitespace delta must be added back to
-        # address the token in the parent doc.
+        # Offsets are against the stripped text (what we store/regex over), so
+        # add back the leading-whitespace delta to address the parent doc.
         lead_ws = len(raw) - len(raw.lstrip())
         text = raw.strip()
         doc = span.doc
@@ -570,15 +541,14 @@ def _coref_hits_in_sentence(
     """Company keys whose coref mentions fall inside one sentence, plus the earliest
     substitutable mention's span relative to the sentence text.
 
-    `coref_mentions` carries absolute offsets into the article text; a mention belongs
-    to the sentence when fully contained in [offset, offset+length). Containment, not
-    overlap: a span straddling a boundary would corrupt the returned offsets.
+    `coref_mentions` carries absolute offsets into the article text; a mention
+    belongs to the sentence when fully contained in [offset, offset+length)
+    (containment not overlap, so a boundary-straddling span can't corrupt offsets).
 
     Expletive mentions are dropped outright. Person-like and non-substitutable
     mentions still key the sentence but are never chosen as the span, so a sentence
-    holding both a junk mention and a good pronoun selects the pronoun.
-
-    `best` is None when every mention is person-like or non-substitutable.
+    with both a junk mention and a good pronoun selects the pronoun. `best` is None
+    when every mention is person-like or non-substitutable.
     """
     keys: set[str] = set()
     best: tuple[int, int] | None = None
@@ -602,13 +572,12 @@ def _coref_hits_in_sentence(
 def flag_boilerplate(
     sentences_df: pd.DataFrame, min_articles: int = BOILERPLATE_MIN_ARTICLES
 ) -> pd.DataFrame:
-    """Set is_boilerplate=True where exact sentence text appears in at least
+    """Set is_boilerplate=True where exact sentence text repeats across at least
     `min_articles` distinct articles.
 
     Catches disclosure notices and syndicated filler that survive the length filter
-    and, repeating across hundreds of articles, drag every aggregate toward one value.
-
-    Corpus-level, so the single-article paths leave it False. Returns a copy.
+    and would otherwise drag every aggregate toward one value. Corpus-level, so the
+    single-article paths leave it False. Returns a copy.
     """
     out = sentences_df.copy()
     if len(out) == 0:
@@ -631,22 +600,21 @@ def map_coref_clusters(
     """Map one document's coref clusters onto companies.
 
     A cluster refers to a company when any of its mention surfaces matches that
-    company's registry alias pattern. Only the registry is consulted, so this and the
-    explicit path cannot disagree about what a name means.
+    company's registry alias pattern. Only the registry is consulted, so this and
+    the explicit path cannot disagree about what a name means. A cluster matching
+    more than one company is discarded rather than guessed at (counted in
+    stats["ambiguous"]).
 
-    A cluster matching more than one company is discarded rather than guessed at, and
-    counted in stats["ambiguous_clusters"].
+    Person mentions never key a cluster: `person_spans` carries PERSON entity
+    offsets in the cluster spans' coordinate system, and title noun phrases matching
+    _TITLE_TOKEN_RE ("the Tesla CEO") are excluded the same way despite carrying no
+    PERSON entity. Both rules affect keying only, a person-like mention still
+    belongs to its cluster and still tags its sentence when some other mention
+    names the company.
 
-    Person mentions never key a cluster. `person_spans` carries PERSON entity offsets
-    in the cluster spans' coordinate system, defaulting to None. Title noun phrases
-    matching _TITLE_TOKEN_RE ("the Tesla CEO") carry no PERSON entity and are excluded
-    on the same grounds. Both rules affect keying only: a person-like mention still
-    belongs to its cluster and still tags its sentence when some other mention names
-    the company.
-
-    Returns (mentions, stats): a flat list of (abs_char_start, abs_char_end, key) for
-    every mention of every unambiguously resolved cluster, and counts of clusters
-    seen, resolved, ambiguous and unresolved.
+    Returns (mentions, stats): a flat list of (abs_char_start, abs_char_end, key)
+    for every mention of every unambiguously resolved cluster, and counts of
+    clusters seen, resolved, ambiguous and unresolved.
     """
     if patterns is None:
         patterns = _build_ticker_patterns(ticker)["names"]
@@ -663,8 +631,8 @@ def map_coref_clusters(
             if not surface:
                 continue
             if _is_person_like(surface, start, end, person_spans):
-                # Unusable for keying; still a member of the cluster, and still
-                # tagged below if some other mention resolves the chain.
+                # Unusable for keying; still a cluster member, tagged below if
+                # some other mention resolves the chain.
                 continue
             if target_names is not None and target_names.search(surface):
                 keys.add("TARGET")
@@ -691,10 +659,10 @@ def process_articles(
     PERSON entities are threaded through to map_coref_clusters(). An unavailable
     backend logs one warning and tags on explicit names alone.
 
-    Coref must see the exact string the Spans were parsed from, or its offsets address
-    different characters than the sentence boundaries do. split_sentences() applies
-    _fix_missing_space() first, so the cleaned text is what is sent, and the identity
-    is asserted against the parsed Doc rather than assumed.
+    Coref must see the exact string the Spans were parsed from, or its offsets
+    address different characters than the sentence boundaries do; split_sentences()
+    applies _fix_missing_space() first, and the identity is asserted against the
+    parsed Doc rather than assumed.
 
     Columns: SENTENCE_COLUMNS.
     """
@@ -703,8 +671,8 @@ def process_articles(
     texts = df[text_col].tolist()
     article_ids = df["article_id"].tolist()
 
-    # The single canonical string per article: what coref reads, and (because
-    # _fix_missing_space is idempotent) what split_sentences parses.
+    # Canonical string per article: what coref reads and, since _fix_missing_space
+    # is idempotent, what split_sentences parses too.
     cleaned = [_fix_missing_space(t) if isinstance(t, str) else "" for t in texts]
 
     all_sentences = split_sentences(cleaned, nlp=nlp, return_spans=True)
@@ -728,14 +696,12 @@ def process_articles(
                     desc="Mapping coref clusters",
                 )
             ):
-                # Explicit alignment check: the Doc the Spans came from must be
-                # character-identical to the string coref was given, otherwise
-                # every offset below points at the wrong characters.
+                # The Doc the Spans came from must be character-identical to the
+                # string coref was given, else every offset below is wrong.
                 if sentences and sentences[0].doc.text != cleaned[i]:
                     n_misaligned += 1
                     continue
-                # Same parse as the Spans, so the coordinates match the cluster
-                # spans.
+                # Same parse as the Spans, so coordinates match the cluster spans.
                 person_spans = (
                     [
                         (ent.start_char, ent.end_char)
