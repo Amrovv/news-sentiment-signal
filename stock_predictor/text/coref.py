@@ -53,16 +53,15 @@ CACHE_COLUMNS = ["text_hash", "clusters_json"]
 
 
 def _load_model():
-    """Load (once, then memoise) the fastcoref model. Returns None on failure.
+    """Load (once, then memoize) the fastcoref model. Returns None on failure.
 
-    Tries the GPU first when one is available, falling back to CPU; see the
-    comment on the loop below for why the fallback matters here specifically.
+    Tries the GPU first when one is available, falling back to CPU (see the loop
+    below for why the fallback matters here specifically).
 
-    Wrapped rather than imported bare for two compatibility reasons: fastcoref 2.1.x
-    predates transformers 5.x and its FCorefModel lacks `all_tied_weights_keys`,
-    which from_pretrained() reads unconditionally, so the shim below supplies the
-    empty mapping; and fastcoref logs at INFO through stdlib logging, which would
-    swamp loguru output.
+    Two compatibility shims applied here: fastcoref 2.1.x predates transformers
+    5.x and its FCorefModel lacks `all_tied_weights_keys`, which from_pretrained()
+    reads unconditionally, so an empty mapping is supplied; and fastcoref logs at
+    INFO through stdlib logging, which would swamp loguru output.
     """
     global _MODEL, _LOAD_FAILED, _DEVICE
     if _MODEL is not None or _LOAD_FAILED:
@@ -224,17 +223,17 @@ def resolve_documents(
 ) -> list[list[Cluster]]:
     """Resolve coreference over a batch of documents, with an on-disk cache.
 
-    Returns one list of clusters per input document, in input order; each cluster is a
-    list of (char_start, char_end) spans into that document's text.
+    Returns one list of clusters per input document, in input order; each cluster
+    is a list of (char_start, char_end) spans into that document's text.
 
-    Only cache misses reach the model, duplicate texts collapse to one inference, and
-    new rows are merged with the cache loaded at call start. Pass use_cache=False for
-    a cold run.
+    Only cache misses reach the model, duplicate texts collapse to one inference,
+    and new rows are merged with the cache loaded at call start. Pass
+    use_cache=False for a cold run.
 
     Batching uses fastcoref's predict(), which packs documents up to `batch_size`
     subword tokens per pass. Left as None it follows the device the model actually
-    loaded onto -- COREF_BATCH_SIZE_GPU on a GPU, COREF_BATCH_SIZE on the CPU --
-    since the batch a GPU can hold is far smaller than the one system RAM can.
+    loaded onto (COREF_BATCH_SIZE_GPU vs COREF_BATCH_SIZE), since the batch a GPU
+    can hold is far smaller than the one system RAM can.
 
     Never raises: on backend failure every document gets an empty cluster list.
     """

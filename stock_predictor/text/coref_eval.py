@@ -238,7 +238,7 @@ def build_contexts(
 
     Order matters: `evaluate_judge()` zips these against the frame positionally,
     so a reordering here would silently score every judgement against the wrong
-    label -- the kind of bug that produces a plausible number and no error.
+    label, the kind of bug that produces a plausible number and no error.
     """
     head_col = "headline" if "headline" in articles.columns else "title"
     headlines = articles.set_index("article_id")[head_col].to_dict()
@@ -284,8 +284,8 @@ def accept_only(answer: str) -> bool:
     """The accept/discard rule: accept iff the judge said exactly `yes`.
 
     Fail-closed, in one place, so no caller can quietly decide that `unsure` is
-    good enough. Anything unrecognised -- an empty string, a stack trace, a
-    model that answered in a sentence -- is a discard, not an exception.
+    good enough. Anything unrecognised (empty string, stack trace, a model that
+    answered in a sentence) is a discard, not an exception.
     """
     return isinstance(answer, str) and answer.strip().lower() == "yes"
 
@@ -316,7 +316,7 @@ def save_judge_cache(cache_df: pd.DataFrame, path=COREF_JUDGE_CACHE_PATH) -> Non
     """Persist verdicts, deduped on the full key (keep last).
 
     Callers must pass the MERGE of the cache they loaded and the rows they
-    produced -- see the module docstring on why replacing is a bug and not a
+    produced; see the module docstring on why replacing is a bug, not a
     simplification.
     """
     path.parent.mkdir(parents=True, exist_ok=True)

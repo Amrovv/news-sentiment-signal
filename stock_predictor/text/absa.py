@@ -51,9 +51,8 @@ _LOAD_FAILED = False
 def pair_hash(text: str, aspect: str) -> str:
     """Cache key for one (text, aspect) pair.
 
-    Delegates to sentiment.hash_text() over the NUL-joined pair so that there is
-    one hashing implementation in the codebase, and so that text and aspect
-    TOGETHER form the key — see the module docstring.
+    Delegates to sentiment.hash_text() over the NUL-joined pair, one hashing
+    implementation, and text+aspect together form the key (see module docstring).
     """
     return sentiment.hash_text(f"{(text or '').strip()}\x00{(aspect or '').strip()}")
 
@@ -93,11 +92,11 @@ def save_cache(cache_df: pd.DataFrame, path=ABSA_CACHE_PATH) -> None:
 
 
 def _load_model_and_tokenizer():
-    """Load (once, then memoise) the ABSA model. Returns (None, None) on failure.
+    """Load (once, then memoize) the ABSA model. Returns (None, None) on failure.
 
-    Used in its sentence-pair form: tokenizer(text, aspect) -> 3 logits. Label order
-    is read from config.id2label, never assumed; this checkpoint is
-    {0: Negative, 1: Neutral, 2: Positive}, unlike FinBERT.
+    Used in sentence-pair form: tokenizer(text, aspect) -> 3 logits. Label order is
+    read from config.id2label, never assumed; this checkpoint's order differs from
+    FinBERT's.
     """
     global _MODEL, _TOKENIZER, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
@@ -142,10 +141,9 @@ def score_pairs(
 ) -> pd.DataFrame:
     """Core batched + cached aspect-based scorer.
 
-    `pairs` is a list of (text, aspect). Pairs are deduped on pair_hash, cache hits
-    served, and the remainder sorted by combined length before batching so same-batch
-    sequences pad alike. Label columns are mapped by name from model.config.id2label;
-    this checkpoint's order differs from FinBERT's.
+    `pairs` is a list of (text, aspect), deduped on pair_hash; the remainder is
+    sorted by combined length before batching so same-batch sequences pad alike.
+    Label columns are mapped by name from model.config.id2label.
 
     If every hash hits, the model is never loaded. If it cannot be loaded, un-cached
     pairs are omitted with one warning and callers' left-merge turns them into NaN.
@@ -274,12 +272,11 @@ def _consume_trailing_clitic(text: str, surface: str, end: int) -> tuple[str | N
     """Detect an apostrophe clitic glued to the end of the replaced span.
 
     The resolved span often covers only the pronoun ("It" in "It's also profitable"),
-    leaving the clitic just outside it, so replacing naively yields the possessive
+    leaving the clitic just outside it, so a naive replace yields the possessive
     "Tesla's also profitable" for a sentence meaning "Tesla is also profitable".
 
     Returns (expansion, clitic_len) when `surface` is a bare, non-possessive pronoun
-    and `text` after `end` begins with a known clitic; otherwise (None, 0). Possessive
-    surfaces are handled by _inflect_name() instead.
+    and `text` after `end` begins with a known clitic; otherwise (None, 0).
     """
     low = (surface or "").strip().lower()
     if low not in _BARE_PRONOUN_SURFACES:

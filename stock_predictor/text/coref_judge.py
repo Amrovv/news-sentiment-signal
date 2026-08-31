@@ -130,12 +130,10 @@ def _prepend_cuda_dlls_to_path() -> None:
     PATH before llama_cpp is imported, so a CUDA-enabled build can find
     cudart/cublas at load time.
 
-    llama_cpp's own loader passes winmode=ctypes.RTLD_GLOBAL to ctypes.CDLL,
-    which -- a documented Windows/ctypes quirk -- silently ignores directories
-    registered via os.add_dll_directory. PATH is honored regardless of that
-    flag, so it is the one mechanism that reliably works for this loader. A
-    no-op if the nvidia pip packages are not installed (e.g. a CPU-only
-    environment) or on a non-Windows platform.
+    llama_cpp's loader passes winmode=ctypes.RTLD_GLOBAL to ctypes.CDLL, which (a
+    documented Windows/ctypes quirk) silently ignores directories registered via
+    os.add_dll_directory; PATH is honored regardless, so it is the one mechanism
+    that reliably works here. No-op without the nvidia pip packages or off Windows.
     """
     if sys.platform != "win32":
         return
@@ -156,15 +154,13 @@ def _load_model(
     n_threads: int | None = None,
     n_gpu_layers: int = JUDGE_N_GPU_LAYERS,
 ):
-    """Load (once, then memoise) the GGUF model. Returns None on failure.
+    """Load (once, then memoize) the GGUF model. Returns None on failure.
 
-    Tries GPU offload first (n_gpu_layers), falling back to CPU-only (0) if
-    that raises for any reason -- a GPU-specific failure (a missing CUDA
-    runtime, an incompatible build) must not turn into "every row judged
-    unsure", which is what _LOAD_FAILED otherwise means everywhere else in
-    this module. _LOAD_FAILED latches only once both attempts have failed
-    (or immediately if the GGUF file itself is missing), so this still warns
-    once rather than on every row.
+    Tries GPU offload first (n_gpu_layers), falling back to CPU-only (0): a
+    GPU-specific failure (missing CUDA runtime, incompatible build) must not turn
+    into "every row judged unsure", which is what _LOAD_FAILED otherwise means
+    elsewhere in this module. _LOAD_FAILED latches only once both attempts have
+    failed (or immediately if the GGUF file is missing), so this still warns once.
     """
     global _MODEL, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
@@ -320,15 +316,16 @@ def judge_corpus(
                         verdict passes accept_only(). Fails closed.
 
     Chunked and resumable: verdicts flush every `chunk` rows to a cache keyed
-    (article_id, sent_idx, target, model_id, prompt_version), merge-never-replace, so
-    a re-run resumes rather than restarting. A fully cached corpus never loads the
-    weights.
+    (article_id, sent_idx, target, model_id, prompt_version), merge-never-replace,
+    so a re-run resumes rather than restarting. A fully cached corpus never loads
+    the weights.
 
-    `judge` is injectable so the loop can run without weights. `articles` supplies each
-    context window's headline; both frames are passed in, keeping this a transform.
+    `judge` is injectable so the loop can run without weights. `articles` supplies
+    each context window's headline; both frames are passed in, keeping this a
+    transform.
 
     `require_signal` raises when every verdict came back `unsure`, which on a real
-    corpus means the backend never answered rather than that the corpus is
+    corpus means the backend never answered rather than the corpus being
     undecidable. Off by default so the per-row fail-closed contract stays testable
     with an injected judge; `run_pipeline` turns it on, since that is where an
     all-discarded corpus would otherwise become a deliverable.
