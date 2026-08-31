@@ -23,7 +23,7 @@ REPORTS_DIR = PROJ_ROOT / "reports"
 
 # Figures written by notebooks, which name their own files after the notebook
 # that drew them (3.4-relative-sentiment-per-fold.png). Generated reports do not
-# write here -- each one keeps its figures beside itself, see report_dir().
+# write here; each one keeps its figures beside itself, see report_dir().
 FIGURES_DIR = REPORTS_DIR / "figures"
 
 # Reports are grouped by the pipeline that generates them, one directory each,
@@ -154,7 +154,7 @@ COMPANIES = {
     "AAPL": {
         "names": ["Apple", "AAPL", "Apple Inc", "Apple Inc.", "$AAPL"],
         # "Cook" and "Jobs" alone are excluded: common words ("to cook", "jobs" the
-        # noun), unlike "Musk"/"Huang" -- would false-positive constantly. Full
+        # noun), unlike "Musk"/"Huang", would false-positive constantly. Full
         # names only.
         "person": ["Tim Cook", "Steve Jobs"],
         "products": [
@@ -253,7 +253,7 @@ FETCH_CAP_WARN_COUNT = 100
 
 # finnhub-python's client has no retry/backoff of its own (a bare
 # requests.Session, no HTTPAdapter/Retry mounted), and a daily-windowed pull
-# is ~365 calls where the old monthly one was ~13 -- one transient timeout
+# is ~365 calls where the old monthly one was ~13: one transient timeout
 # used to be rare enough to ignore, now it's close to guaranteed over a full
 # year. pull_company_news retries a failing window this many times, waiting
 # FETCH_RETRY_BACKOFF_SECONDS between attempts, before logging it as failed
@@ -282,15 +282,15 @@ MAX_SHIFT_HOURS = (
 
 # A cross-host canonical is normally trusted outright (it's the original
 # outlet's own page), but that has no floor against a genuinely old,
-# re-referenced story surfacing in Finnhub's feed years after it first ran --
-# found in practice: a 2023 CNN article scored into a 2025-2026 pull. Cap how
+# re-referenced story surfacing in Finnhub's feed years after it first ran:
+# found in practice, a 2023 CNN article scored into a 2025-2026 pull. Cap how
 # far a cross-host date may diverge from the Finnhub API time before it's
 # rejected back to the API time instead of trusted.
 MAX_CROSS_HOST_SHIFT_DAYS = 30
 REQ_PER_SEC = 3.5  # global scrape rate, held under Yahoo's 429 limit
 
 # A full corpus can be tens of thousands of articles, and at REQ_PER_SEC that
-# is well over an hour of continuous network I/O -- a long enough window that
+# is well over an hour of continuous network I/O, a long enough window that
 # a killed process, a lost connection, or a machine restart partway through
 # is a real risk, not a hypothetical one. scrape.py's CLI runs in chunks of
 # this size, checkpointing each chunk's result to processed_chunk_dir()
@@ -370,13 +370,13 @@ SPACY_PIPE_BATCH_SIZE = 200
 # reads pos_, tag_, morph or lemma_, which is all the tagger, attribute_ruler
 # and lemmatizer produce. Both the parser and the NER listen to tok2vec rather
 # than to the tagger, so dropping these does not change what they predict.
-# DO NOT add "ner" or "parser" here -- see the warning on _get_nlp().
+# DO NOT add "ner" or "parser" here; see the warning on _get_nlp().
 SPACY_EXCLUDE = ["lemmatizer", "tagger", "attribute_ruler"]
 
 # Worker processes for the sentence-splitting parse, the pipeline's largest
 # CPU-bound cost (~11.5 min for 12k articles single-process). Workers spawn on
-# Windows, so the caller must sit under an `if __name__ == "__main__"` guard --
-# run_pipeline does. Each worker holds its own copy of the model and the Docs in
+# Windows, so the caller must sit under an `if __name__ == "__main__"` guard,
+# which run_pipeline does. Each worker holds its own copy of the model and the Docs in
 # flight, so this buys wall time with memory; 4 of 6 cores leaves room for both.
 SPACY_N_PROCESS = 4
 
@@ -440,7 +440,7 @@ JUDGE_MODEL_PATH = MODELS_DIR / "gguf" / "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
 # GPU layers to offload for the judge model, when a CUDA-capable llama-cpp-python
 # build is installed: -1 offloads every layer (fastest, tried first), 0 forces
 # CPU-only (the original, always-viable path this project was built around).
-# CPU-viable was a real constraint, not a preference -- keep 0 working.
+# CPU-viable was a real constraint, not a preference; keep 0 working.
 JUDGE_N_GPU_LAYERS = -1
 
 # Batch sizes and flash attention for the GPU path. Measured on an RTX 2070
@@ -454,7 +454,7 @@ JUDGE_FLASH_ATTN = True
 # Quantized KV cache type for the GPU path (ggml type id: 8 = q8_0). Cuts KV
 # cache memory-bandwidth cost a bit further; negligible accuracy risk for a
 # single-word yes/no/unsure classification. None leaves llama.cpp's default
-# (f16) in place -- the safe fallback if this ever needs disabling.
+# (f16) in place, the safe fallback if this ever needs disabling.
 JUDGE_KV_CACHE_TYPE = 8
 
 # --- Torch model placement ---------------------------------------------------
