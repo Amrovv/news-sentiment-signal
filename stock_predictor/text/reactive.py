@@ -189,7 +189,13 @@ def aggregate_reactive_features(
 
     if len(sentences_df) == 0:
         out = pd.DataFrame(
-            columns=["article_id", "n_reactive_sents", "reactive_share", "reactive_mean", "reactive_max"]
+            columns=[
+                "article_id",
+                "n_reactive_sents",
+                "reactive_share",
+                "reactive_mean",
+                "reactive_max",
+            ]
         )
     else:
         df = sentences_df.copy().reset_index(drop=True)
