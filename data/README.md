@@ -2,26 +2,23 @@
 
 What lives here, what is tracked, and what can be rebuilt.
 
-Most of this directory is ignored by git. Only the source pull, the labelled eval set and the final
-model table are committed; everything else is derived and is rebuilt by running the pipeline. The
-sizes below are the current working copy, not what a fresh clone gets.
+Most of this directory is ignored by git. Only the market source tables, the labelled eval set and
+the final model tables are committed; everything else is derived and is rebuilt by running the
+pipeline. The sizes below are the current working copy, not what a fresh clone gets.
 
-## `raw/` — the source pull, tracked
+## `raw/` — the market source pull, tracked
 
-The only genuine input. Everything else in `data/` descends from it.
+The market layer's inputs, kept because they pin the exact rows the market notebooks were run
+against. The article pull is not tracked: the per-ticker raw pulls and the large processed corpus are
+regenerable (see `interim/`), so `raw/` holds only the small market tables.
 
-- **`raw_articles.parquet`** (804 KB, 3,143 rows): the Finnhub metadata pull covering 2025-08-22 to
-  2026-08-07 across eight publishers. Columns are `article_id`, `headline`, `summary`, `source`,
-  `url`, `timestamp_utc`. It carries no article bodies: `url` is the only pointer to them, and the
-  scrape that followed reached 2,124 of the 3,143. Re-pulling needs a Finnhub key and may not
-  return the same window, so treat this as unreproducible.
-- **`raw_ohlcv.parquet`** (32 KB, 284 rows): SPY and TSLA daily bars, 2025-06-23 to 2026-08-07.
-- **`raw_earnings.parquet`** (4 KB, 5 rows): EPS estimate, reported EPS and surprise, by earnings
-  date.
-- **`raw_schedule.parquet`** (12 KB, 259 rows): market open and close times.
+- **`raw_ohlcv.parquet`**: daily OHLCV bars for SPY and the four tickers.
+- **`raw_schedule.parquet`**: NYSE market open and close times.
+- **`{TICKER}_raw_earnings.parquet`** (AAPL, AMZN, NVDA, TSLA): EPS estimate, reported EPS and
+  surprise, by earnings date.
 
-The three market files are re-fetchable but are kept because they pin the exact rows the market
-notebooks were run against.
+Re-fetchable with `python -m stock_predictor.market.prices`, though a re-pull may not return the same
+window.
 
 ## `eval/` — labelled ground truth, tracked
 
