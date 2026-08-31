@@ -81,7 +81,7 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
     Wilson rather than the normal approximation: these samples are small and the
     rates sit near the ends of the range, where the normal interval runs past 0 or 1.
-    Identical to notebook 2.7's definition so the numbers are comparable.
+    Identical to notebook 2.1's definition so the numbers are comparable.
     """
     if n == 0:
         return (float("nan"), float("nan"))
@@ -160,7 +160,7 @@ def load_eval_set(path=COREF_EVAL_PATH) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
             f"No labelled eval set at {path}. Nothing can be measured without it; "
-            "see notebook 2.7 for how it was built."
+            "see notebook 2.1 for how it was built."
         )
     df = pd.read_parquet(path)
     missing = set(EVAL_COLUMNS) - set(df.columns)
