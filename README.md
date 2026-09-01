@@ -1,4 +1,4 @@
-# news2market-ml
+# news-sentiment-signal
 
 **Does financial-news sentiment predict a stock's next move?** An end-to-end machine-learning research pipeline that scores news sentiment *toward a specific company* (not in general) and tests it against market returns across four tickers: TSLA, AAPL, AMZN, NVDA.
 
@@ -32,10 +32,10 @@ flowchart LR
     D --> E[model<br/>session-level LightGBM]
 ```
 
-* **text** (`stock_predictor/text/`) is the core. Splits article bodies into sentences, tags which are about the target company using explicit names plus neural coreference, scores each with FinBERT and an aspect-based model (ABSA) *toward that company*, then gates every coreference-resolved sentence through a local instruct-LLM (Qwen2.5-7B) that verifies the referent. Output: one feature row per article.
-* **market** (`stock_predictor/market/`) builds pre-publication features including momentum, volatility, beta, relative volume, and earnings distance, alongside the abnormal-return label. Every feature is verified computable at publication time. A `momentum_1d` leakage regression runs on every merge.
-* **merge** (`stock_predictor/merge/`) joins the two tables per article, checks the key means one article everywhere, and pools the tickers on `(article_id, ticker)`.
-* **model** (`stock_predictor/modeling/`, `features.py`) trains a session-level LightGBM model through a walk-forward harness and locked holdout. Ships as `models/session_model.joblib`.
+* **text** (`news_sentiment/text/`) is the core. Splits article bodies into sentences, tags which are about the target company using explicit names plus neural coreference, scores each with FinBERT and an aspect-based model (ABSA) *toward that company*, then gates every coreference-resolved sentence through a local instruct-LLM (Qwen2.5-7B) that verifies the referent. Output: one feature row per article.
+* **market** (`news_sentiment/market/`) builds pre-publication features including momentum, volatility, beta, relative volume, and earnings distance, alongside the abnormal-return label. Every feature is verified computable at publication time. A `momentum_1d` leakage regression runs on every merge.
+* **merge** (`news_sentiment/merge/`) joins the two tables per article, checks the key means one article everywhere, and pools the tickers on `(article_id, ticker)`.
+* **model** (`news_sentiment/modeling/`, `features.py`) trains a session-level LightGBM model through a walk-forward harness and locked holdout. Ships as `models/session_model.joblib`.
 
 ## Setup
 
@@ -62,13 +62,13 @@ uv run python -c "from transformers import AutoModelForSequenceClassification as
 
 ```bash
 # Build the feature tables (per ticker, or --all)
-uv run python -m stock_predictor.text.run_pipeline TSLA
-uv run python -m stock_predictor.market.run_pipeline --all
-uv run python -m stock_predictor.merge.run_pipeline --all
+uv run python -m news_sentiment.text.run_pipeline TSLA
+uv run python -m news_sentiment.market.run_pipeline --all
+uv run python -m news_sentiment.merge.run_pipeline --all
 
 # Train and serialize the shipped model, then score new sessions
 make train                                      # -> models/session_model.joblib
-uv run python -m stock_predictor.modeling.predict INPUT.parquet
+uv run python -m news_sentiment.modeling.predict INPUT.parquet
 
 # Interactive text-layer demo: paste an article, see sentiment toward a company
 uv run streamlit run app/streamlit_app.py
@@ -79,7 +79,7 @@ The text pipeline is resumable and cached. Budget several hours from cold, with 
 ## Repository layout
 
 ```text
-stock_predictor/       source package
+news_sentiment/       source package
     text/              entity-scoped sentiment pipeline (the core)
     market/            pre-publication features + abnormal-return label
     merge/             join, integrity checks, pooling

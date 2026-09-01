@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.merge.leakage.
+"""Tests for news_sentiment.merge.leakage.
 
 A leakage test that cannot fail is worth nothing, so the load-bearing test here
 is the positive control: a deliberately leaky `momentum_1d` must be caught. The
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.merge import leakage
+from news_sentiment.merge import leakage
 
 TICKER = "TSLA"
 

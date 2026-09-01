@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from stock_predictor.text import absa
-from stock_predictor.text.sentiment import ABSA_FEATURE_COLUMNS, aggregate_article_features
+from news_sentiment.text import absa
+from news_sentiment.text.sentiment import ABSA_FEATURE_COLUMNS, aggregate_article_features
 
 TICKER = "TSLA"
 

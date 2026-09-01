@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.market.evaluate.
+"""Tests for news_sentiment.market.evaluate.
 
 Metrics, EvalResult and the final refit are covered first; the splitter and the
 fold-level guarantees follow, from what was tests/test_evaluate_v2.py before the
@@ -27,7 +27,7 @@ import pandas as pd
 import pytest
 from sklearn.base import BaseEstimator, ClassifierMixin
 
-from stock_predictor.market.evaluate import (
+from news_sentiment.market.evaluate import (
     EvalResult,
     FoldResult,
     evaluate,

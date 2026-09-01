@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.text.coref_eval import (
+from news_sentiment.text.coref_eval import (
     CACHE_COLUMNS,
     JudgeContext,
     accept_only,

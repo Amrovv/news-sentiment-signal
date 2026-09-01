@@ -4,7 +4,7 @@ One row per article, judge-gated. The final output of the text pipeline and the 
 
 **Rows:** 9,073 | **Columns:** 24 | **Span:** 2025-09-01 to 2026-08-01
 
-Produced by `stock_predictor.text.run_pipeline`, Phase E. Every score is a fusion of FinBERT and DeBERTa ABSA at `CONF_FLOOR`; no raw probability triples and no provenance columns are carried. Sentences the referent judge rejected contribute to nothing here.
+Produced by `news_sentiment.text.run_pipeline`, Phase E. Every score is a fusion of FinBERT and DeBERTa ABSA at `CONF_FLOOR`; no raw probability triples and no provenance columns are carried. Sentences the referent judge rejected contribute to nothing here.
 
 ## Distribution over time
 

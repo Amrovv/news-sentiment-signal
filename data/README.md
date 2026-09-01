@@ -17,7 +17,7 @@ regenerable (see `interim/`), so `raw/` holds only the small market tables.
 - **`{TICKER}_raw_earnings.parquet`** (AAPL, AMZN, NVDA, TSLA): EPS estimate, reported EPS and
   surprise, by earnings date.
 
-Re-fetchable with `python -m stock_predictor.market.prices`, though a re-pull may not return the same
+Re-fetchable with `python -m news_sentiment.market.prices`, though a re-pull may not return the same
 window.
 
 ## `eval/` — labelled ground truth, tracked
@@ -77,7 +77,7 @@ Held a sourced company registry that was measured net harmful and removed with i
 
 ## Rebuilding
 
-`python -m stock_predictor.text.run_pipeline` runs the whole text layer from
+`python -m news_sentiment.text.run_pipeline` runs the whole text layer from
 `processed_articles.parquet` and writes every artifact above except `raw/` and `eval/`. With warm
 caches that is roughly 25 minutes; from cold it is about five hours, almost all of it the judge.
 

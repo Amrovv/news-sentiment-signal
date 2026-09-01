@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.config import LEAD_SENTENCE_WINDOW
-from stock_predictor.text.fusion import (
+from news_sentiment.config import LEAD_SENTENCE_WINDOW
+from news_sentiment.text.fusion import (
     AGGREGATED_VARIANTS,
     CONF_FLOOR,
     DEADBAND,

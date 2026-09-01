@@ -2,7 +2,7 @@
 
 Predicts the sign of a ticker-session's next abnormal return (target return minus
 SPY) from aggregated financial-news sentiment and pre-publication market features.
-Produced by `stock_predictor.modeling.train`.
+Produced by `news_sentiment.modeling.train`.
 
 ## Model
 
@@ -45,6 +45,6 @@ result on this label.
 ## Reproducing
 
 ```bash
-python -m stock_predictor.modeling.train      # writes models/session_model.joblib
-python -m stock_predictor.modeling.predict INPUT.parquet   # scores new sessions
+python -m news_sentiment.modeling.train      # writes models/session_model.joblib
+python -m news_sentiment.modeling.predict INPUT.parquet   # scores new sessions
 ```

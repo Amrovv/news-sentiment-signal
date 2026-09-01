@@ -70,7 +70,7 @@ create_environment:
 ## Train and serialize the shipped session model
 .PHONY: train
 train: requirements
-	uv run python -m stock_predictor.modeling.train
+	uv run python -m news_sentiment.modeling.train
 
 
 #################################################################################

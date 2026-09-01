@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.market.features.
+"""Tests for news_sentiment.market.features.
 
 Every pre-publication feature (everything except abnormal_return_for, which is the label)
 gets a same-day-leakage regression test: mutate the value for the article's own trading
@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.market.features import (
+from news_sentiment.market.features import (
     abnormal_return_for,
     beta_vs_market,
     cumulative_return,

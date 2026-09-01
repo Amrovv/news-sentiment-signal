@@ -207,10 +207,10 @@ data/processed/processed_articles*.parquet
 
 # Per-ticker cleaned article bodies (headline + processed_body), shared
 # machine-to-machine outside git -- large, regenerable via
-# stock_predictor.fetch.scrape, disk-only by design.
+# news_sentiment.fetch.scrape, disk-only by design.
 data/processed/*_processed_no_raw.parquet
 
-# Raw article pulls -- regenerable from stock_predictor.fetch.finnhub_pull,
+# Raw article pulls -- regenerable from news_sentiment.fetch.finnhub_pull,
 # heavy, and disk-only by design (see reports/*_raw_fetch_report.md for what
 # a pull produced instead).
 data/raw/*_raw_articles.parquet

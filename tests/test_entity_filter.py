@@ -1,10 +1,10 @@
 import pandas as pd
 import pytest
 
-from stock_predictor.config import MIN_SENT_CHARS
-from stock_predictor.text import coref
-from stock_predictor.text import entity_filter as _entity_filter
-from stock_predictor.text.entity_filter import (
+from news_sentiment.config import MIN_SENT_CHARS
+from news_sentiment.text import coref
+from news_sentiment.text import entity_filter as _entity_filter
+from news_sentiment.text.entity_filter import (
     flag_boilerplate,
     map_coref_clusters,
     process_articles,
@@ -39,7 +39,7 @@ COREF_CORPUS = pd.DataFrame(
 def nlp():
     import spacy
 
-    from stock_predictor.config import SPACY_MODEL
+    from news_sentiment.config import SPACY_MODEL
 
     return spacy.load(SPACY_MODEL, exclude=["ner", "lemmatizer"])
 
@@ -139,7 +139,7 @@ def test_split_sentences_fixes_missing_space_after_period(nlp):
 
 
 # ---------------------------------------------------------------------------
-# Coreference resolution (stock_predictor/text/coref.py)
+# Coreference resolution (news_sentiment/text/coref.py)
 #
 # Tests that need the real coref model are marked slow, matching the convention
 # in test_sentiment.py. Everything else must run with coref DISABLED and must
@@ -218,7 +218,7 @@ def test_span_columns_are_nullable_int():
 def test_needs_score_unaffected_by_new_columns():
     # sentiment.needs_score() reads only mentions_target/ceo and
     # is_boilerplate; adding coref columns must not disturb it.
-    from stock_predictor.text.sentiment import needs_score
+    from news_sentiment.text.sentiment import needs_score
 
     out = process_articles(COREF_CORPUS, TICKER, use_coref=False)
     mask = needs_score(out)

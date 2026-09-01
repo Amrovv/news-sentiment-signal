@@ -16,8 +16,8 @@ Run with:  streamlit run app/streamlit_app.py
 import pandas as pd
 import streamlit as st
 
-from stock_predictor.config import COMPANIES
-from stock_predictor.text import entity_filter, sentiment
+from news_sentiment.config import COMPANIES
+from news_sentiment.text import entity_filter, sentiment
 
 # A short Tesla example, so the demo does something on first load without the user
 # having to find an article first.

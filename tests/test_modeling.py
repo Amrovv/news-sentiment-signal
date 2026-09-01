@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor import features
-from stock_predictor.modeling import predict as predict_mod
-from stock_predictor.modeling import train as train_mod
+from news_sentiment import features
+from news_sentiment.modeling import predict as predict_mod
+from news_sentiment.modeling import train as train_mod
 
 SESSIONS_PER_TICKER = 30
 TICKERS = ["AAA", "BBB"]

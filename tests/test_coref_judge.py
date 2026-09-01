@@ -7,8 +7,8 @@ about, so it is the part pinned here; inference itself is llama.cpp's problem.
 import pandas as pd
 import pytest
 
-from stock_predictor.text.coref_eval import JUDGE_ANSWERS, accept_only
-from stock_predictor.text.coref_judge import (
+from news_sentiment.text.coref_eval import JUDGE_ANSWERS, accept_only
+from news_sentiment.text.coref_judge import (
     ANSWERS,
     PROMPT_VERSION,
     build_prompt,
@@ -20,7 +20,7 @@ from stock_predictor.text.coref_judge import (
 
 
 def _ctx(sentence="The company grew.", span=(0, 11), headline="A headline"):
-    from stock_predictor.text.coref_eval import JudgeContext
+    from news_sentiment.text.coref_eval import JudgeContext
 
     return JudgeContext(
         article_id=1,
@@ -124,7 +124,7 @@ def test_prompt_version_is_set():
 def test_judge_returns_unsure_when_the_model_file_is_absent(tmp_path, monkeypatch):
     """A missing model must discard every row, not raise. Reset the module's
     memoised handle so this test does not depend on execution order."""
-    import stock_predictor.text.coref_judge as cj
+    import news_sentiment.text.coref_judge as cj
 
     monkeypatch.setattr(cj, "_MODEL", None)
     monkeypatch.setattr(cj, "_LOAD_FAILED", False)
@@ -136,7 +136,7 @@ def test_judge_returns_unsure_when_the_model_file_is_absent(tmp_path, monkeypatc
 
 def test_missing_model_is_not_reported_per_row(tmp_path, monkeypatch, caplog):
     """_LOAD_FAILED latches, so a 3-hour run does not emit one warning per row."""
-    import stock_predictor.text.coref_judge as cj
+    import news_sentiment.text.coref_judge as cj
 
     monkeypatch.setattr(cj, "_MODEL", None)
     monkeypatch.setattr(cj, "_LOAD_FAILED", False)
@@ -218,7 +218,7 @@ def test_judge_returns_unsure_when_inference_raises(monkeypatch):
     outright exceptions are discards, but only evaluate_judge() delivered that,
     so any caller driving the judge directly -- which is what a corpus run does
     -- inherited a crash instead of a discard."""
-    import stock_predictor.text.coref_judge as cj
+    import news_sentiment.text.coref_judge as cj
 
     class Exploding:
         def __call__(self, *a, **k):
@@ -237,7 +237,7 @@ def test_default_context_window_covers_the_measured_corpus_maximum():
     """Corpus max prompt is 2,446 tokens; the 270-row eval set topped out at 513
     and gave no warning. The default must clear the corpus maximum, not the
     sample's."""
-    from stock_predictor.text.coref_judge import DEFAULT_N_CTX
+    from news_sentiment.text.coref_judge import DEFAULT_N_CTX
 
     assert DEFAULT_N_CTX >= 2446
 

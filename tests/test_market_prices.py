@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.market.prices.
+"""Tests for news_sentiment.market.prices.
 
 Only the offline half: the pulls themselves need the network and are not
 exercised here. `_empty_symbols` is, because it is the guard against the one
@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.market.prices import _empty_symbols
+from news_sentiment.market.prices import _empty_symbols
 
 FIELDS = ["Close", "High", "Low", "Volume"]
 
