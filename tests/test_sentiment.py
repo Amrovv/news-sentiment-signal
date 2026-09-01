@@ -2,11 +2,11 @@ import pandas as pd
 from pandas.testing import assert_frame_equal
 import pytest
 
-from stock_predictor.config import LEAD_SENTENCE_WINDOW
-from stock_predictor.text import fusion
-from stock_predictor.text import sentiment as sentiment_module
-from stock_predictor.text.fusion import AGGREGATED_VARIANTS, FUSION_AGGREGATIONS
-from stock_predictor.text.sentiment import (
+from news_sentiment.config import LEAD_SENTENCE_WINDOW
+from news_sentiment.text import fusion
+from news_sentiment.text import sentiment as sentiment_module
+from news_sentiment.text.fusion import AGGREGATED_VARIANTS, FUSION_AGGREGATIONS
+from news_sentiment.text.sentiment import (
     ABSA_FEATURE_COLUMNS,
     FUSION_FEATURE_COLUMNS,
     MODEL_FEATURE_COLUMNS,
@@ -861,7 +861,7 @@ def test_score_sentence_table_only_relevant_skips_forward_passes(tmp_path):
     df, path = _seeded_table_and_cache(tmp_path)
     seen = {}
 
-    import stock_predictor.text.sentiment as sentiment_module
+    import news_sentiment.text.sentiment as sentiment_module
 
     real = sentiment_module.score_sentences
 

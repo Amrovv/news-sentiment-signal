@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from stock_predictor.text.entity_filter import SENTENCE_COLUMNS
-from stock_predictor.text.reactive import (
+from news_sentiment.text.entity_filter import SENTENCE_COLUMNS
+from news_sentiment.text.reactive import (
     aggregate_reactive_features,
     classify_reactive_sentence,
     tag_reactive_sentences,

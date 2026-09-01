@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.merge.integrity.
+"""Tests for news_sentiment.merge.integrity.
 
 The checks exist to catch a key that has stopped meaning one article, so each
 one is tested against a table where that has actually happened, not only against
@@ -9,7 +9,7 @@ sentiment to another company's return.
 
 import pandas as pd
 
-from stock_predictor.merge import integrity
+from news_sentiment.merge import integrity
 
 
 def _frame(ids, timestamps=None, headlines=None) -> pd.DataFrame:

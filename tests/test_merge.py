@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.merge.merge.
+"""Tests for news_sentiment.merge.merge.
 
 Covers the join itself and the accounting around it: that the two expected kinds
 of drop are reported separately and correctly, that shared columns are not
@@ -9,7 +9,7 @@ duplicated into the merged table, and that the pooled table is keyed on
 import pandas as pd
 import pytest
 
-from stock_predictor.merge import merge as merge_module
+from news_sentiment.merge import merge as merge_module
 
 
 def _text(ids, ticker="TSLA") -> pd.DataFrame:

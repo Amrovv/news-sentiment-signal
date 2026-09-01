@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.market.report.
+"""Tests for news_sentiment.market.report.
 
 The report is generated from the frame it describes, so what matters is that it
 cannot silently disagree with that frame: every figure it links has to exist,
@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.market import labels, report
+from news_sentiment.market import labels, report
 
 
 @pytest.fixture

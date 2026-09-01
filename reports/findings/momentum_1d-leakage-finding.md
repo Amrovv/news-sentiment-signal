@@ -1,3 +1,10 @@
+> **Status: resolved.** This is the notebook 2.0 section that first caught the leak,
+> kept as the record of how it was found. The numbers below describe the *pre-fix*
+> table (the old 1,976-row TSLA corpus). The fix is the `ref_date.normalize()` cutoff
+> in `market.features.cumulative_return`, and `merge.leakage.test_momentum_1d` now
+> reconstructs `momentum_1d` under both hypotheses on **every** merge, so a regression
+> would fail the merge rather than reach a model.
+
 ### 11. Leakage smell test
 
 Every feature must pass one test: could this have been computed at the moment the article was

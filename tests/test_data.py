@@ -1,7 +1,7 @@
 import pytest
 
-from stock_predictor.market.timestamp_alignment import align_timestamp, make_dt
-from stock_predictor.config import NEWS_START_DATE, NEWS_END_DATE
+from news_sentiment.market.timestamp_alignment import align_timestamp, make_dt
+from news_sentiment.config import NEWS_START_DATE, NEWS_END_DATE
 import datetime as dt
 import pandas as pd
 import pandas_market_calendars as mcal

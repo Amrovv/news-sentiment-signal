@@ -1,4 +1,4 @@
-"""Tests for stock_predictor.market.labels.
+"""Tests for news_sentiment.market.labels.
 
 The vectorised helpers exist only to make a 17k-article corpus tractable, so
 most of what matters here is that they agree exactly with the row-at-a-time
@@ -13,10 +13,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.config import LABEL_HORIZONS_DAYS
-from stock_predictor.market import labels
-from stock_predictor.market.features import abnormal_return_for, session_for
-from stock_predictor.market.timestamp_alignment import align_timestamp
+from news_sentiment.config import LABEL_HORIZONS_DAYS
+from news_sentiment.market import labels
+from news_sentiment.market.features import abnormal_return_for, session_for
+from news_sentiment.market.timestamp_alignment import align_timestamp
 
 TICKER = "TSLA"
 BENCHMARK = "SPY"

@@ -1,15 +1,41 @@
-# stock-predictor
+# news-sentiment-signal
 
-Predicting TSLA price movement from financial news sentiment.
+**Does financial-news sentiment predict a stock's next move?** An end-to-end machine-learning research pipeline that scores news sentiment *toward a specific company* (not in general) and tests it against market returns across four tickers: TSLA, AAPL, AMZN, NVDA.
 
-The text layer is built and is where the work has gone: it turns 2,124 scraped articles into one
-feature row per article, scoring each sentence for sentiment *toward the target company* rather than
-sentiment in general, and verifying with a local LLM that each coreference-resolved sentence really
-is about that company. The market and modeling layers are scaffolding. **No price model has been
-trained yet**, so every accuracy figure in this repository is a text metric, never a trading result.
+Built by Adam Wasiak and Kacper Kawecki. Python 3.12, `uv`, MIT-licensed.
 
-The pipeline is `stock_predictor/text/`, driven end to end by `run_pipeline.py`. The reasoning
-behind every choice in it lives in `notebooks/text/`, in pipeline order.
+## The finding
+
+Article-level news sentiment shows limited predictive signal for next-session abnormal returns across these tickers. Aggregated to the trading session, a tuned LightGBM classifier finds a real, significant signal that survives a locked holdout, but it is narrow and largely backward-looking:
+
+| metric (locked holdout) | value                    |
+| ----------------------- | ------------------------ |
+| accuracy                | 0.5798 (baseline 0.4309) |
+| edge over baseline      | +0.1489                  |
+| AUC                     | 0.6191                   |
+| McNemar p               | 0.0019                   |
+
+The edge is carried by one company (AAPL). The sentiment signal correlates with the *previous* session's return more than the next one. The full, evidence-backed record is in [`reports/findings/4.0-final-findings.md`](reports/findings/4.0-final-findings.md) and the [model card](reports/findings/model-card.md).
+
+The value of the project is the **text layer**: entity-scoped sentiment with neural coreference and local-LLM referent verification.
+
+## Pipeline
+
+Four ticker-agnostic layers that meet only at Parquet tables and the constants in `config.py`, so no layer's construction can see another's.
+
+```mermaid
+flowchart LR
+    A[fetch<br/>Finnhub + scrape] --> B[text<br/>entity-scoped sentiment]
+    A --> C[market<br/>leak-safe features + label]
+    B --> D[merge<br/>join + integrity]
+    C --> D
+    D --> E[model<br/>session-level LightGBM]
+```
+
+* **text** (`news_sentiment/text/`) is the core. Splits article bodies into sentences, tags which are about the target company using explicit names plus neural coreference, scores each with FinBERT and an aspect-based model (ABSA) *toward that company*, then gates every coreference-resolved sentence through a local instruct-LLM (Qwen2.5-7B) that verifies the referent. Output: one feature row per article.
+* **market** (`news_sentiment/market/`) builds pre-publication features including momentum, volatility, beta, relative volume, and earnings distance, alongside the abnormal-return label. Every feature is verified computable at publication time. A `momentum_1d` leakage regression runs on every merge.
+* **merge** (`news_sentiment/merge/`) joins the two tables per article, checks the key means one article everywhere, and pools the tickers on `(article_id, ticker)`.
+* **model** (`news_sentiment/modeling/`, `features.py`) trains a session-level LightGBM model through a walk-forward harness and locked holdout. Ships as `models/session_model.joblib`.
 
 ## Setup
 
@@ -19,104 +45,79 @@ uv sync
 
 Four things `uv sync` does not cover:
 
-**1. spaCy language model**, needed by the entity filter:
-
 ```bash
+# 1. spaCy model (entity filter)
 uv run python -m spacy download en_core_web_sm
+
+# 2. Transformer weights (FinBERT + ABSA), pre-fetched to avoid a mid-run stall
+uv run python -c "from transformers import AutoModelForSequenceClassification as M; \
+ M.from_pretrained('ProsusAI/finbert'); M.from_pretrained('yangheng/deberta-v3-base-absa-v1.1')"
 ```
 
-**2. Transformer weights.** FinBERT (`ProsusAI/finbert`) and the ABSA model
-(`yangheng/deberta-v3-base-absa-v1.1`) download from HuggingFace on first use. The coreference model
-(`biu-nlp/f-coref`) does the same. To pre-fetch and avoid a stall mid-run:
+3. **Referent-verification judge** (optional): a 4-bit GGUF of Qwen2.5-7B-Instruct (~4.7 GB) at `models/gguf/Qwen2.5-7B-Instruct-Q4_K_M.gguf`. If absent, the judge stage is skipped and the corpus is left unverified rather than failing.
+
+4. **Finnhub API key** for re-pulling the article feed: put `FINNHUB_API_KEY=...` in `.env`.
+
+## Running
 
 ```bash
-uv run python -c "from transformers import AutoModelForSequenceClassification as M; M.from_pretrained('ProsusAI/finbert'); M.from_pretrained('yangheng/deberta-v3-base-absa-v1.1')"
+# Build the feature tables (per ticker, or --all)
+uv run python -m news_sentiment.text.run_pipeline TSLA
+uv run python -m news_sentiment.market.run_pipeline --all
+uv run python -m news_sentiment.merge.run_pipeline --all
+
+# Train and serialize the shipped model, then score new sessions
+make train                                      # -> models/session_model.joblib
+uv run python -m news_sentiment.modeling.predict INPUT.parquet
+
+# Interactive text-layer demo: paste an article, see sentiment toward a company
+uv run streamlit run app/streamlit_app.py
 ```
 
-**3. The referent-verification judge**, a 4-bit GGUF of Qwen2.5-7B-Instruct, about 4.7 GB. It is not
-fetched automatically and `models/` is gitignored. Place it at the path `config.JUDGE_MODEL_PATH`
-expects:
+The text pipeline is resumable and cached. Budget several hours from cold, with the judge dominating, or about 25 minutes with warm caches.
 
+## Repository layout
+
+```text
+news_sentiment/       source package
+    text/              entity-scoped sentiment pipeline (the core)
+    market/            pre-publication features + abnormal-return label
+    merge/             join, integrity checks, pooling
+    modeling/          train / predict the shipped model
+    features.py        session-table builder + final model config
+    config.py          central paths, constants, the company registry
+
+app/                   Streamlit demo
+
+notebooks/             the reasoning behind every decision, in pipeline order
+    text/              2.0-2.3: sentence table -> referent -> score -> article table
+    market/            price, calendar, feature construction
+    modelling/         3.0-4.0: iterations, tuning, and the final findings record
+
+reports/               generated analysis (fetch / market / merge / text / findings)
+
+data/                  see data/README.md for what is tracked and what rebuilds
+
+tests/                 pytest suite (run the fast subset with make test-fast)
 ```
-models/gguf/Qwen2.5-7B-Instruct-Q4_K_M.gguf
-```
 
-Without it `coref_judge.is_available()` returns False and the judge stage is skipped, which leaves
-the corpus unverified rather than failing loudly.
+## Documentation
 
-**4. Finnhub API key**, for re-pulling the article feed. Create `.env` (gitignored):
+* **Decisions and evidence** live in `notebooks/`, in pipeline order. The modelling arc runs from `3.0` (EDA) through `3.7` (tuning) to `4.0` (final findings).
+* **`reports/findings/`** contains the final findings notebook's standalone report, the model card, and the momentum-leakage write-up.
+* **`data/README.md`** documents what each data directory holds, what is tracked, and what rebuilding costs.
 
-```
-FINNHUB_API_KEY=your_key_here
-```
-
-## Running the text pipeline
+## Development
 
 ```bash
-uv run python -m stock_predictor.text.run_pipeline
+make lint         # ruff format --check + ruff check
+make test-fast    # pytest -m "not slow" (skips model/network tests)
+make test         # full suite
+make format       # ruff format + autofix
 ```
 
-It reads the cleaned article table at `config.PROCESSED_ARTICLES_PATH` and runs five phases: split
-and tag, score with both models, judge the coreference-resolved sentences, aggregate to articles,
-and write the deliverable.
+CI (`.github/workflows/ci.yml`) runs the lint and the fast tests on every push and PR.
 
-**Budget about five hours from cold**, almost all of it the judge at roughly 5 seconds per sentence
-on CPU. With the caches in `data/interim/` warm it is closer to 25 minutes. The run is resumable:
-phases skip if their output exists, and the judge flushes verdicts every 100 rows, so an interrupted
-run picks up where it stopped rather than restarting.
+## License
 
-The output is:
-
-```
-data/processed/pipeline_run/article_features.parquet    1,976 articles x 23 columns
-data/processed/pipeline_run/article_features.md         its data dictionary
-```
-
-One row per article, judge-gated, every score a fusion of both scorers. Read the `.md` before
-modelling on it: several columns are deliberately NaN rather than 0, and one is deliberately the
-reverse.
-
-## Where things are documented
-
-- `data/README.md` — what each data directory holds, what is tracked, what rebuilding costs
-- `references/README.md` — the label sets, which is authoritative, and how `sample_id` decodes
-- `notebooks/text/` — the decisions and their evidence, in pipeline order. `2.0` builds the sentence
-  table, `2.1` resolves who each sentence is about, `2.2` chooses the score, `2.3` builds the article
-  table. The 2.x notebooks are a record with stored output and are not re-runnable.
-
-## Project organisation
-
-```
-├── .env               <- Secret/config variables (git-ignored)
-├── Makefile           <- Shortcut commands: make lint, make test, make format
-├── pyproject.toml     <- Project metadata, dependencies, tool config
-│
-├── app                <- Streamlit demo (not built)
-│
-├── data               <- See data/README.md
-│   ├── raw            <- The Finnhub pull. The only true source.
-│   ├── interim        <- Caches and pipeline phase outputs (git-ignored)
-│   ├── processed      <- pipeline_run/ holds the deliverable
-│   ├── eval           <- Labelled referent ground truth
-│   └── external       <- Third-party data (empty)
-│
-├── docs               <- Project documentation (empty)
-├── models             <- Model weights, incl. the judge GGUF (git-ignored)
-├── notebooks          <- text/ is Person A, market/ is Person B
-├── references         <- Label sets and the labelling protocol
-├── reports            <- Generated analysis
-│   └── figures        <- Generated graphics
-│
-├── stock_predictor    <- Source code package
-│   ├── config.py      <- Central paths, constants, logging
-│   ├── text           <- Person A layer (text & deep learning)
-│   ├── market         <- Person B layer (market data)
-│   ├── modeling       <- Train / predict (stubs, not implemented)
-│   ├── dataset.py     <- Download / generate data (stub)
-│   ├── features.py    <- Build model features (stub)
-│   └── plots.py       <- Create visualizations (stub)
-│
-└── tests              <- Automated tests (pytest)
-```
-
-Two people work in this repo. **Do not edit `stock_predictor/market/`** — it belongs to Person B.
+MIT. See [`LICENSE`](LICENSE).

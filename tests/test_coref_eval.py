@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_predictor.text.coref_eval import (
+from news_sentiment.text.coref_eval import (
     CACHE_COLUMNS,
     JudgeContext,
     accept_only,
@@ -51,7 +51,7 @@ def _row(row_id, sent_idx, verdict, has_span=True, borderline=False, article_id=
 
 
 # ---------------------------------------------------------------------------
-# wilson_ci -- must agree with the definition notebook 2.7 uses
+# wilson_ci -- must agree with the definition notebook 2.1 uses
 # ---------------------------------------------------------------------------
 
 
@@ -62,7 +62,7 @@ def test_wilson_ci_brackets_the_point_estimate():
 
 def test_wilson_ci_stays_inside_zero_one_at_the_extremes():
     # Tolerance, not clamping: at k=0 (and k=n) the closed form lands on 0 (or 1)
-    # up to float rounding, and wilson_ci is kept byte-identical to notebook 2.7's
+    # up to float rounding, and wilson_ci is kept byte-identical to notebook 2.1's
     # definition so numbers computed here and there are directly comparable.
     # Clamping would break that identity to hide an error of 3e-17.
     eps = 1e-12
@@ -373,7 +373,7 @@ def test_real_eval_set_loads_with_the_expected_shape():
 
 
 def test_real_eval_set_baseline_matches_the_published_figures():
-    """90.0% span / 68.8% no-span -- notebook 2.7 §2. A drift here means the
+    """90.0% span / 68.8% no-span -- notebook 2.1 §2. A drift here means the
     labels changed and every figure in 2.7 needs recomputing.
 
     TWO CONVENTION CHANGES ON 2026-08-18 moved these off the 89.0% / 56.5% (85

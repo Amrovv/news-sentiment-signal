@@ -2,7 +2,7 @@
 
 The instruction sheet for labelling the 300-sentence fusion evaluation set
 (`references/fusion-labels.csv` holds the first annotator's labels). This
-formalises the procedure notebook 2.4 section 3 describes in prose, so that a
+formalises the procedure notebook 2.2 section 3 describes in prose, so that a
 second annotator can follow exactly the same one.
 
 Read this in full before labelling the first row.
@@ -96,7 +96,7 @@ Concrete, material, unambiguous.
 3. **Comparatives: judge the aspect only.** When two companies are compared,
    ignore entirely how the sentence reads about the other one.
 4. **Do not consult any model output.** Do not open the pipeline's scores, the
-   fusion module, notebook 2.4, or any existing label file while labelling.
+   fusion module, notebook 2.2, or any existing label file while labelling.
    An annotator shown a model's answer tends to agree with it, and the
    resulting agreement figure then measures conformity rather than
    correctness.
