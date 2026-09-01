@@ -28,15 +28,19 @@ jobs:
           cache: pip
       - name: Install (CPU-only)
         # Plain pip, so the CUDA-pinned indexes in [tool.uv.sources] are ignored.
-        # CPU torch is installed first from the PyTorch CPU index; pip install .
+        # CPU torch is installed first from the PyTorch CPU index; pip install -e .
         # then treats it as already satisfied instead of pulling the large Linux
         # CUDA default wheel. The spaCy model is a URL dependency with no PyPI
         # package, so it is installed by name before the project is.
+        # Editable (-e): config.PROJ_ROOT is derived from config.py's own file
+        # location, and tests read tracked data (data/eval/) relative to it. A
+        # non-editable install copies the package into site-packages, which
+        # moves PROJ_ROOT away from the checkout and off every real data file.
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl"
-          pip install .
+          pip install -e .
           pip install pytest
       - name: Run tests
         # The 'slow' marker gates the tests that load a real model or hit the
